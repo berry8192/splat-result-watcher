@@ -133,3 +133,81 @@ pub fn ncc(t: &Patch, s: &Patch) -> f64 {
         dot / (tn * sn)
     })
 }
+
+/// 数字の見本をそろえる大きさ（縦横の比は保ち、高さを合わせて横は真ん中に置く）
+const GLYPH_H: u32 = 30;
+const GLYPH_W: u32 = 30;
+/// 行の高さに対してこれより低い文字は小数点とみなす
+const DOT_MAX_H: f64 = 0.4;
+/// 白がこれより少ない列のかたまりはごみとして捨てる（行の高さに対する割合）
+const NOISE_PX: f64 = 0.5;
+
+/// 2 値の ROI を白い列のかたまりで 1 文字ずつに切る。小数点は `None`、それ以外は大きさをそろえた文字
+pub fn glyphs(p: &Patch) -> Vec<Option<Patch>> {
+    let col_white = |x: u32| (0..p.h).any(|y| p.px[(y * p.w + x) as usize] != 0);
+    let mut runs = Vec::new();
+    let mut start = None;
+    for x in 0..=p.w {
+        let white = x < p.w && col_white(x);
+        match (white, start) {
+            (true, None) => start = Some(x),
+            (false, Some(s)) => {
+                runs.push((s, x));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    // 各かたまりの上下を詰める
+    let boxes: Vec<(u32, u32, u32, u32, u32)> = runs
+        .into_iter()
+        .filter_map(|(x0, x1)| {
+            let rows: Vec<u32> = (0..p.h)
+                .filter(|&y| (x0..x1).any(|x| p.px[(y * p.w + x) as usize] != 0))
+                .collect();
+            let (y0, y1) = (*rows.first()?, *rows.last()? + 1);
+            let n: u32 = (y0..y1)
+                .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+                .map(|(x, y)| p.px[(y * p.w + x) as usize] as u32)
+                .sum();
+            Some((x0, x1, y0, y1, n))
+        })
+        .collect();
+    let line_h = boxes.iter().map(|b| b.3 - b.2).max().unwrap_or(0);
+    boxes
+        .into_iter()
+        .filter(|b| b.4 as f64 >= NOISE_PX * line_h as f64)
+        .map(|(x0, x1, y0, y1, _)| {
+            let (w, h) = (x1 - x0, y1 - y0);
+            if (h as f64) < DOT_MAX_H * line_h as f64 {
+                return None;
+            }
+            // 高さを GLYPH_H に合わせ、横は比を保って真ん中に置く（最近傍）
+            let sw = ((w as f64 * GLYPH_H as f64 / h as f64).round() as u32).clamp(1, GLYPH_W);
+            let off = (GLYPH_W - sw) / 2;
+            let mut px = vec![0u8; (GLYPH_W * GLYPH_H) as usize];
+            for gy in 0..GLYPH_H {
+                for gx in 0..sw {
+                    let sx = x0 + gx * w / sw;
+                    let sy = y0 + gy * h / GLYPH_H;
+                    px[(gy * GLYPH_W + off + gx) as usize] = p.px[(sy * p.w + sx) as usize];
+                }
+            }
+            Some(Patch { w: GLYPH_W, h: GLYPH_H, px })
+        })
+        .collect()
+}
+
+/// そろえた文字どうしの白の重なり（ずらさない）
+pub fn glyph_iou(a: &Patch, b: &Patch) -> f64 {
+    let (mut and, mut or) = (0u32, 0u32);
+    for (x, y) in a.px.iter().zip(&b.px) {
+        and += (x & y) as u32;
+        or += (x | y) as u32;
+    }
+    if or == 0 {
+        0.0
+    } else {
+        and as f64 / or as f64
+    }
+}

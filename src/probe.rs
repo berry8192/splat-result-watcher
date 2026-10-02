@@ -188,6 +188,90 @@ pub fn run(args: &[String], samples: &Path) -> Result<()> {
             tgray / n * 1e3
         );
     }
+    digits(&images)?;
+    Ok(())
+}
+
+/// X パワーの画面の大きな数字（x 610〜930, y 530〜600 のあたり）
+const POWER: Roi = Roi::new(590, 515, 370, 100);
+/// X の計測完了の数字（字が少し大きい）
+const CALIBRATED: Roi = Roi::new(560, 460, 440, 120);
+
+/// (ファイルの時刻, ROI, 書いてある数字)
+const NUMBERS: &[(&str, Roi, &str)] = &[
+    ("033034", POWER, "2100.0"),
+    ("033044", POWER, "2100.0"),
+    ("033100", POWER, "2100.0"),
+    ("033253", POWER, "2100.0"),
+    ("033306", POWER, "2111.0"),
+    ("033316", POWER, "2139.4"),
+    ("033345", POWER, "2194.6"),
+    ("041847", CALIBRATED, "1830.4"),
+];
+
+/// 数字を 1 枚抜きで試す: 読む 1 枚以外から文字の見本を集め、その 1 枚を読む
+fn digits(images: &[(String, RgbImage)]) -> Result<()> {
+    println!("
+## 数字（1 枚抜き: 読む 1 枚以外の見本で読む）");
+    let mut cut = Vec::new();
+    for (key, roi, text) in NUMBERS {
+        let img = images
+            .iter()
+            .find(|(n, _)| n.contains(key))
+            .map(|(_, i)| i)
+            .with_context(|| format!("見本 {key} が無い"))?;
+        let g = matching::glyphs(&matching::binary(img, *roi, 0));
+        if g.len() != text.chars().count() {
+            println!("{key}: {} 文字に切れた（{} のはず）", g.len(), text);
+        }
+        cut.push((*key, *text, g));
+    }
+
+    let mut tsum = 0f64;
+    for (i, (key, text, gs)) in cut.iter().enumerate() {
+        // ほかの見本の文字を集める（小数点は形で決まるので要らない）
+        let mut tmpl: Vec<(char, &Patch)> = Vec::new();
+        for (j, (_, t, g)) in cut.iter().enumerate() {
+            if i == j || g.len() != t.chars().count() {
+                continue;
+            }
+            for (c, p) in t.chars().zip(g) {
+                if let Some(p) = p {
+                    tmpl.push((c, p));
+                }
+            }
+        }
+        let t0 = Instant::now();
+        let mut read = String::new();
+        let mut detail = Vec::new();
+        for g in gs {
+            let Some(g) = g else {
+                read.push('.');
+                continue;
+            };
+            // 文字ごとの一番よい一致度。1 位と 2 位を残す
+            let mut best: Vec<(char, f64)> = Vec::new();
+            for (c, p) in &tmpl {
+                let v = matching::glyph_iou(g, p);
+                match best.iter_mut().find(|b| b.0 == *c) {
+                    Some(b) => b.1 = b.1.max(v),
+                    None => best.push((*c, v)),
+                }
+            }
+            best.sort_by(|a, b| b.1.total_cmp(&a.1));
+            let first = best.first().copied().unwrap_or(('?', 0.0));
+            let second = best.get(1).copied().unwrap_or(('?', 0.0));
+            read.push(first.0);
+            detail.push(format!("{}{:.2}/{}{:.2}", first.0, first.1, second.0, second.1));
+        }
+        tsum += t0.elapsed().as_secs_f64();
+        let ok = if read == *text { "○" } else { "×" };
+        println!("{ok} {key} 答え {text:<7} 読み {read:<7} [{}]", detail.join(" "));
+    }
+    println!(
+        "1 枚あたりの照合（切り出しを除く）: {:.3}ms",
+        tsum / cut.len() as f64 * 1e3
+    );
     Ok(())
 }
 
