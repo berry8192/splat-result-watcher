@@ -1,0 +1,32 @@
+[package]
+name = "splat-result-watcher"
+version = "0.1.0"
+description = "スプラトゥーン3 の配信映像からリザルトを読み、WebSocket で流す"
+authors = ["berry8192"]
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = "0.4"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Storage_Xps",
+    "Win32_System_Console",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+panic = "abort"
+codegen-units = 16
+lto = false
+strip = true
+incremental = true
+
+# 撮った画像の縮小・圧縮は debug だと桁違いに遅い。依存だけは debug でも最適化しておく
+[profile.dev.package."*"]
+opt-level = 3
