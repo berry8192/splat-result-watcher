@@ -47,7 +47,7 @@ localhost の WebSocket で受ける。nicomment はその受け手の 1 つ。
 - [x] 撮影（`src/nair.rs`）: プロジェクターを開いて画面の外に置き、子窓を撮る。消えたら開き直す。
   前回が落ちて閉じ損ねた窓は、控えたハンドル（`%LOCALAPPDATA%\splat-result-watcher\projector.hwnd`）で閉じる
 - [x] 見本の録画（`splat-result-watcher record`）: 0.5 秒ごとにゲーム穴だけを JPEG で残し、合計の上限を超えたら
-  古い順に消す（`--full` なら出力まるごと）。既定の置き場所は `%LOCALAPPDATA%\splat-result-watcher\samples`、
+  古い順に消す（`--full` なら出力まるごと）。既定の置き場所は repo の `samples/record/`（git 管理外）、
   1024×576 で 1 枚約 130KB（1 時間で約 0.9GB）、上限 20GB
 - [ ] 見本を見て、画面の順番・位置を確かめる（下の「見本集めで確かめること」）
 - [x] ゲーム穴の切り出し（`src/layout.rs`）

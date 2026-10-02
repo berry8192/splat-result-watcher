@@ -40,6 +40,13 @@ unsafe extern "system" fn on_ctrl(_: u32) -> BOOL {
     true.into()
 }
 
+/// 見本の置き場所。repo の `samples/`（git 管理外。ゲーム画面の切り抜きは同梱しない）。
+/// exe をどこから起動しても同じ所に貯まるよう、ビルドしたときの repo の場所を使う
+fn samples_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("samples")
+}
+
+/// 人が見ない内部のファイル（閉じ損ねたプロジェクターの控えなど）の置き場所
 fn data_dir() -> PathBuf {
     let base = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
@@ -124,7 +131,7 @@ fn shot(args: &[String]) -> Result<()> {
 
 /// 1 枚撮って、説明を付けて残す。説明はいくつの引数に分かれていてもよい（空白でつなぐ）
 fn snap(args: &[String]) -> Result<()> {
-    let mut dir = data_dir().join("snaps");
+    let mut dir = samples_dir().join("snaps");
     let mut width = 1920;
     let mut full = false;
     let mut words = Vec::new();
@@ -202,7 +209,7 @@ fn file_safe(s: &str) -> String {
 
 fn record(args: &[String]) -> Result<()> {
     let mut cfg = RecorderConfig {
-        root: data_dir().join("samples"),
+        root: samples_dir().join("record"),
         width: 1280,
         quality: 85,
         cap_bytes: 20 * 1024 * 1024 * 1024,
