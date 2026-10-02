@@ -15,8 +15,12 @@ use crate::matching::{self, Patch, Roi};
 
 /// ずらして探す幅（縮めた後の px）
 const MARGIN: u32 = 4;
-/// YouTube の画面ごと撮った見本（位置が本番と違う）。名前の時刻で外す
-const SKIP: (&str, &str) = ("20261003-035500", "20261003-035959");
+/// YouTube の画面ごと撮った見本（位置が本番と違う）。ファイル名の範囲で外す。
+/// 050430 のほこは、縮尺を合わせた「（縮尺合わせ）」の方を使う
+const SKIP: &[(&str, &str)] = &[
+    ("20261003-035500", "20261003-035959"),
+    ("20261003-050430_ほこ.png", "20261003-050430_ほこ.png"),
+];
 /// 答えの無い見本を何枚まで並べるか（一致度の高い順）
 const SHOW_NEG: usize = 5;
 
@@ -43,6 +47,7 @@ const TESTS: &[Test] = &[
         answers: &[
             ("032822", "x"),
             ("035159", "x"),
+            ("050430", "x"),
             ("042128", "bankara_challenge"),
             ("042142", "bankara_challenge"),
         ],
@@ -50,10 +55,16 @@ const TESTS: &[Test] = &[
     Test {
         name: "ルール（個人リザルトの見出し）",
         roi: Roi::new(722, 68, 66, 40),
-        templates: &[("yagura", "032822"), ("area", "035159"), ("asari", "042128")],
+        templates: &[
+            ("yagura", "032822"),
+            ("area", "035159"),
+            ("hoko", "050430"),
+            ("asari", "042128"),
+        ],
         answers: &[
             ("032822", "yagura"),
             ("035159", "area"),
+            ("050430", "hoko"),
             ("042128", "asari"),
             ("042142", "asari"),
         ],
@@ -78,7 +89,7 @@ pub fn run(args: &[String], samples: &Path) -> Result<()> {
         .filter(|p| p.extension().is_some_and(|e| e == "png"))
         .filter(|p| {
             let n = p.file_name().unwrap().to_string_lossy();
-            !(n.as_ref() >= SKIP.0 && n.as_ref() <= SKIP.1)
+            !SKIP.iter().any(|(a, b)| n.as_ref() >= *a && n.as_ref() <= *b)
         })
         .collect();
     files.sort();
