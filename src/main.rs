@@ -1,11 +1,14 @@
 //! splat-result-watcher。いまは撮影と見本集めだけ。
 //!
 //! - `splat-result-watcher shot [出力.png] [--width 1920]`
-//!   プロジェクターを開いて 1 枚撮り、PNG で書き出す。10 回撮った時間も出す
-//! - `splat-result-watcher record [--dir <置き場所>] [--width 1280] [--quality 85] [--cap-gb 20]`
-//!   0.5 秒ごとに撮って JPEG で残す（見本集め）。Ctrl+C で止める。
-//!   `--width` の大きさで撮る（撮影の時間は面積に比例し、1920 だと 20ms を超えて 1 秒ごとに落ちる）
+//!   プロジェクターを開いて 1 枚撮り、PNG で書き出す（ゲーム穴だけのものも `_game` を付けて）。
+//!   10 回撮った時間も出す
+//! - `splat-result-watcher record [--dir <置き場所>] [--width 1280] [--quality 85] [--cap-gb 20] [--full]`
+//!   0.5 秒ごとに撮り、ゲーム穴（layout.rs）だけを JPEG で残す（見本集め）。Ctrl+C で止める。
+//!   `--width` は出力を撮る幅（撮影の時間は面積に比例し、1920 だと 20ms を超えて 1 秒ごとに落ちる）。
+//!   `--full` なら出力をまるごと残す
 
+mod layout;
 mod nair;
 mod recorder;
 
@@ -49,7 +52,7 @@ fn main() {
         Some("record") => record(&args[1..]),
         _ => {
             eprintln!("使い方: splat-result-watcher shot [出力.png] [--width 1920]");
-            eprintln!("        splat-result-watcher record [--dir <置き場所>] [--width 1280] [--quality 85] [--cap-gb 20]");
+            eprintln!("        splat-result-watcher record [--dir <置き場所>] [--width 1280] [--quality 85] [--cap-gb 20] [--full]");
             std::process::exit(2);
         }
     };
@@ -91,16 +94,26 @@ fn shot(args: &[String]) -> Result<()> {
     let img = last.unwrap();
     img.save(&out)
         .with_context(|| format!("{} を書けない", out.display()))?;
+    let game = layout::crop_game(&img);
+    let game_out = out.with_file_name(format!(
+        "{}_game.png",
+        out.file_stem().unwrap_or_default().to_string_lossy()
+    ));
+    game.save(&game_out)
+        .with_context(|| format!("{} を書けない", game_out.display()))?;
     let avg = times.iter().sum::<f64>() / times.len() as f64;
     let max = times.iter().cloned().fold(0.0, f64::max);
     println!(
-        "{}×{}  撮影 平均 {:.1} ms / 最大 {:.1} ms  ほぼ黒 {:.0}%  -> {}",
+        "{}×{}  撮影 平均 {:.1} ms / 最大 {:.1} ms  ほぼ黒 {:.0}%  -> {}（ゲーム穴 {}×{} -> {}）",
         img.width(),
         img.height(),
         avg,
         max,
         nair::dark_ratio(&img) * 100.0,
-        out.display()
+        out.display(),
+        game.width(),
+        game.height(),
+        game_out.display()
     );
     Ok(())
 }
@@ -112,10 +125,12 @@ fn record(args: &[String]) -> Result<()> {
         quality: 85,
         cap_bytes: 20 * 1024 * 1024 * 1024,
     };
+    let mut full = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut val = || it.next().context(format!("{} の値が無い", a));
         match a.as_str() {
+            "--full" => full = true,
             "--dir" => cfg.root = PathBuf::from(val()?),
             "--width" => cfg.width = val()?.parse()?,
             "--quality" => cfg.quality = val()?.parse()?,
@@ -130,9 +145,14 @@ fn record(args: &[String]) -> Result<()> {
     nair::init_dpi();
     unsafe { SetConsoleCtrlHandler(Some(on_ctrl), true) }.context("Ctrl+C を受けられない")?;
     println!(
-        "見本の置き場所: {}（{}px 幅・上限 {:.1} GB）。Ctrl+C で止める",
+        "見本の置き場所: {}（出力を {}px 幅で撮り、{}を残す・上限 {:.1} GB）。Ctrl+C で止める",
         cfg.root.display(),
         cfg.width,
+        if full {
+            "まるごと"
+        } else {
+            "ゲーム穴だけ"
+        },
         cfg.cap_bytes as f64 / 1024f64.powi(3)
     );
     let width = cfg.width;
@@ -182,6 +202,7 @@ fn record(args: &[String]) -> Result<()> {
             Ok(img) => {
                 let ms = t.elapsed().as_secs_f64() * 1000.0;
                 stats.add(ms);
+                let img = if full { img } else { layout::crop_game(&img) };
                 if nair::dark_ratio(&img) > NO_SIGNAL_DARK {
                     stats.dark += 1;
                 } else if recorder.push(at, img) {
