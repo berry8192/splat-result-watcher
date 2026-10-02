@@ -3,6 +3,8 @@
 //! - `splat-result-watcher shot [出力.png] [--width 1920]`
 //!   プロジェクターを開いて 1 枚撮り、PNG で書き出す（ゲーム穴だけのものも `_game` を付けて）。
 //!   10 回撮った時間も出す
+//! - `splat-result-watcher snap <説明…> [--full] [--width 1920] [--dir <置き場所>]`
+//!   1 枚撮ってゲーム穴を PNG で残す（見本を手で集める用）。説明はファイル名と `index.tsv` に残す
 //! - `splat-result-watcher record [--dir <置き場所>] [--width 1280] [--quality 85] [--cap-gb 20] [--full]`
 //!   0.5 秒ごとに撮り、ゲーム穴（layout.rs）だけを JPEG で残す（見本集め）。Ctrl+C で止める。
 //!   `--width` は出力を撮る幅（撮影の時間は面積に比例し、1920 だと 20ms を超えて 1 秒ごとに落ちる）。
@@ -49,9 +51,11 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("shot") => shot(&args[1..]),
+        Some("snap") => snap(&args[1..]),
         Some("record") => record(&args[1..]),
         _ => {
             eprintln!("使い方: splat-result-watcher shot [出力.png] [--width 1920]");
+            eprintln!("        splat-result-watcher snap <説明…> [--full] [--width 1920] [--dir <置き場所>]");
             eprintln!("        splat-result-watcher record [--dir <置き場所>] [--width 1280] [--quality 85] [--cap-gb 20] [--full]");
             std::process::exit(2);
         }
@@ -116,6 +120,84 @@ fn shot(args: &[String]) -> Result<()> {
         game_out.display()
     );
     Ok(())
+}
+
+/// 1 枚撮って、説明を付けて残す。説明はいくつの引数に分かれていてもよい（空白でつなぐ）
+fn snap(args: &[String]) -> Result<()> {
+    let mut dir = data_dir().join("snaps");
+    let mut width = 1920;
+    let mut full = false;
+    let mut words = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--full" => full = true,
+            "--width" => width = it.next().context("--width の値が無い")?.parse()?,
+            "--dir" => dir = PathBuf::from(it.next().context("--dir の値が無い")?),
+            w => words.push(w.to_string()),
+        }
+    }
+    let note = words.join(" ");
+    if note.trim().is_empty() {
+        bail!("説明が要る（例: snap 勝敗の画面 WIN）");
+    }
+
+    nair::init_dpi();
+    let projector = open_projector(width)?;
+    // 開いた直後は描画が間に合わず黒いことがある
+    std::thread::sleep(Duration::from_millis(500));
+    let at = Local::now();
+    let img = projector.capture()?;
+    drop(projector);
+    let img = if full { img } else { layout::crop_game(&img) };
+
+    std::fs::create_dir_all(&dir).with_context(|| format!("{} を作れない", dir.display()))?;
+    let name = format!("{}_{}.png", at.format("%Y%m%d-%H%M%S"), file_safe(&note));
+    let path = dir.join(&name);
+    img.save(&path)
+        .with_context(|| format!("{} を書けない", path.display()))?;
+
+    // 説明の一覧（ファイル名は切り詰めるので、説明の全文はこちらに残す）
+    let index = dir.join("index.tsv");
+    let line = format!(
+        "{}\t{}\t{}×{}\t{}\n",
+        at.to_rfc3339(),
+        name,
+        img.width(),
+        img.height(),
+        note.replace(['\t', '\n', '\r'], " ")
+    );
+    use std::io::Write;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&index)
+        .and_then(|mut f| f.write_all(line.as_bytes()))
+        .with_context(|| format!("{} に書けない", index.display()))?;
+
+    println!(
+        "{}×{}  ほぼ黒 {:.0}%  -> {}",
+        img.width(),
+        img.height(),
+        nair::dark_ratio(&img) * 100.0,
+        path.display()
+    );
+    Ok(())
+}
+
+/// ファイル名に使えない字を _ にし、長すぎれば切る
+fn file_safe(s: &str) -> String {
+    let t: String = s
+        .trim()
+        .chars()
+        .map(|c| match c {
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if c.is_control() || c.is_whitespace() => '_',
+            c => c,
+        })
+        .take(40)
+        .collect();
+    t.trim_end_matches(['.', '_']).to_string()
 }
 
 fn record(args: &[String]) -> Result<()> {
