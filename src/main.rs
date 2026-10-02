@@ -9,9 +9,13 @@
 //!   0.5 秒ごとに撮り、ゲーム穴（layout.rs）だけを JPEG で残す（見本集め）。Ctrl+C で止める。
 //!   `--width` は出力を撮る幅（撮影の時間は面積に比例し、1920 だと 20ms を超えて 1 秒ごとに落ちる）。
 //!   `--full` なら出力をまるごと残す
+//! - `splat-result-watcher probe [--dir <見本>] [--width 1024]`
+//!   見本で照合を試す（2 値とグレーの一致度と時間。試しのためのもの）
 
 mod layout;
+mod matching;
 mod nair;
+mod probe;
 mod recorder;
 
 use std::path::PathBuf;
@@ -60,10 +64,12 @@ fn main() {
         Some("shot") => shot(&args[1..]),
         Some("snap") => snap(&args[1..]),
         Some("record") => record(&args[1..]),
+        Some("probe") => probe::run(&args[1..], &samples_dir()),
         _ => {
             eprintln!("使い方: splat-result-watcher shot [出力.png] [--width 1920]");
             eprintln!("        splat-result-watcher snap <説明…> [--full] [--width 1920] [--dir <置き場所>]");
             eprintln!("        splat-result-watcher record [--dir <置き場所>] [--width 1280] [--quality 85] [--cap-gb 20] [--full]");
+            eprintln!("        splat-result-watcher probe [--dir <見本>] [--width 1024]");
             std::process::exit(2);
         }
     };
