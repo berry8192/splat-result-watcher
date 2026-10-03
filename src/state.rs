@@ -136,8 +136,9 @@ const BATTLE_TIMEOUT: i64 = 15 * 60;
 const READ_TIMEOUT: i64 = 120;
 /// `result` の後、最後に何か読めてから試合を閉じるまでの長さ（design.md: 3 分）
 const POST_TIMEOUT: i64 = 180;
-/// ルール紹介がちらついて 2 回落ち着いても、これより短い間なら同じ試合
-const INTRO_SAME: i64 = 30;
+/// ルール紹介が途切れてまた読めても、最後に見てからこれより短ければ同じ試合
+/// （紹介は回線によっては 1 分近く続く。ユーザー情報 2026-10-03）
+const INTRO_BLINK: i64 = 10;
 /// 紹介を見ずに勝敗の画面で試合を始めるとき、前に勝敗の画面を見てからこれだけ空いていること
 const OUTCOME_GAP: i64 = 30;
 /// 勝敗の画面がこれより短く途切れても、同じ一続きとみなす（照合の取りこぼし）
@@ -245,8 +246,6 @@ impl Post {
 struct Game {
     id: String,
     started_at: DateTime<Utc>,
-    /// ルール紹介で始めたか（紹介を見落として勝敗の画面で始めたなら false）
-    by_intro: bool,
     intro_rule: Option<Rule>,
     outcome: Option<Outcome>,
     no_contest: bool,
@@ -282,6 +281,9 @@ pub struct Machine {
     /// 映像が無いフレームの続いた数（段階の表示だけ。試合は持ったまま）
     dark: u32,
     intro: Settle<Rule>,
+    /// ルール紹介が映っている一続き（始まり, 最後に見た時刻）と、試合を始めた一続きの始まり
+    intro_episode: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    intro_used: Option<DateTime<Utc>>,
     outcome: Settle<Outcome>,
     nc: Settle<()>,
     header: Settle<(Mode, Option<Rule>, Note)>,
@@ -308,6 +310,8 @@ impl Machine {
             game: None,
             dark: 0,
             intro: Settle::new(STABLE_INTRO),
+            intro_episode: None,
+            intro_used: None,
             outcome: Settle::new(STABLE),
             nc: Settle::new(STABLE),
             header: Settle::new(STABLE),
@@ -357,18 +361,25 @@ impl Machine {
             Seen::RuleIntro(r) => Some(*r),
             _ => None,
         };
+        if intro.is_some() {
+            self.intro_episode = match self.intro_episode {
+                Some((start, last)) if at - last <= Duration::seconds(INTRO_BLINK) => Some((start, at)),
+                _ => Some((at, at)),
+            };
+        }
         if self.intro.push(intro) {
             let r = self.intro.latest;
-            let same = self.game.as_ref().is_some_and(|g| {
-                g.by_intro && !g.has_end() && at - g.started_at <= Duration::seconds(INTRO_SAME)
-            });
+            // 同じ一続きの紹介で、もう試合を始めていれば同じ試合（途切れてまた読めただけ）
+            let episode = self.intro_episode.map(|e| e.0);
+            let same = episode.is_some() && self.intro_used == episode && self.game.is_some();
+            self.intro_used = episode;
             if same {
                 if let Some(g) = &mut self.game {
                     g.intro_rule = g.intro_rule.or(r);
                 }
             } else {
                 self.close(at, &mut out);
-                let g = self.open(at, true, r);
+                let g = self.open(at, r);
                 let mut ev = json!({"type": "battle_started", "match_id": g.id, "at": time(at)});
                 if let Some(r) = r {
                     ev["rule"] = r.as_str().into();
@@ -394,7 +405,7 @@ impl Machine {
                 // 試合が無い・この試合の勝敗はもう読んだ: 紹介を見落とした新しい試合かもしれない
                 _ if self.cfg.outcome_without_intro && self.episode_fresh => {
                     self.close(at, &mut out);
-                    let mut g = self.open(at, false, None);
+                    let mut g = self.open(at, None);
                     g.outcome = o;
                     g.ended_at = Some(at);
                     self.game = Some(g);
@@ -456,13 +467,12 @@ impl Machine {
         out
     }
 
-    fn open(&mut self, at: DateTime<Utc>, by_intro: bool, rule: Option<Rule>) -> Game {
+    fn open(&mut self, at: DateTime<Utc>, rule: Option<Rule>) -> Game {
         self.serial = (self.serial + 1) % 100;
         let id = format!("{}-{:02}", at.with_timezone(&Local).format("%Y%m%d-%H%M"), self.serial);
         Game {
             id,
             started_at: at,
-            by_intro,
             intro_rule: rule,
             outcome: None,
             no_contest: false,
@@ -723,10 +733,16 @@ mod tests {
     }
 
     #[test]
-    fn intro_flicker_is_one_match() {
+    fn long_intro_with_gaps_is_one_match() {
+        // 回線によって紹介は 1 分近く続く。途中で何度か読めなくなっても 1 試合
         let mut r = Run::new();
-        r.feed(Seen::RuleIntro(Rule::Area), 3).wait(1).feed(Seen::RuleIntro(Rule::Area), 3);
+        for _ in 0..5 {
+            r.feed(Seen::RuleIntro(Rule::Area), 16).wait(3);
+        }
         assert_eq!(r.types(), ["battle_started"]);
+        // 紹介が終わって十分たってからの紹介は次の試合（前の試合の勝敗を見落とした）
+        r.wait(60).feed(Seen::RuleIntro(Rule::Hoko), 4);
+        assert_eq!(r.types(), ["battle_started", "battle_started"]);
     }
 
     #[test]
