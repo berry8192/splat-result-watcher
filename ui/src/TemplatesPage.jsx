@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 const POOL_NAMES = {
+  rule_intro: "ルール紹介",
   outcome: "勝敗",
   mode: "モード",
   rule: "ルール",
@@ -149,7 +150,7 @@ export default function TemplatesPage() {
                       {view.scores.map((s) => (
                         <tr key={s.label}>
                           <th>{place.labels.find((l) => l.id === s.label)?.name ?? s.label}</th>
-                          <td>{s.score.toFixed(3)}</td>
+                          <td>一致度 {s.score.toFixed(3)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -181,7 +182,7 @@ export default function TemplatesPage() {
                     <div>
                       読み: <b>{view.reading.text}</b>{" "}
                       <span className="small">
-                        {view.reading.chars.map(([c, v]) => `${c}:${v.toFixed(2)}`).join(" ")}
+                        1 文字ずつの一致度 {view.reading.chars.map(([c, v]) => `${c}:${v.toFixed(2)}`).join(" ")}
                       </span>
                     </div>
                   )}

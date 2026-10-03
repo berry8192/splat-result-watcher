@@ -69,6 +69,22 @@ const TESTS: &[Test] = &[
             ("042142", "asari"),
         ],
     },
+    Test {
+        name: "ルール紹介（試合の始まりの中央の大きな字）",
+        roi: Roi::new(640, 405, 260, 95),
+        templates: &[
+            ("area", "040228"),
+            ("yagura", "132222"),
+            ("hoko", "041551"),
+            ("asari", "040958"),
+        ],
+        answers: &[
+            ("040228", "area"),
+            ("132222", "yagura"),
+            ("041551", "hoko"),
+            ("040958", "asari"),
+        ],
+    },
 ];
 
 pub fn run(args: &[String], samples: &Path) -> Result<()> {

@@ -4,7 +4,7 @@
 //! - 決まった文字の絵: 一番近いラベルの一致度がしきい値以上で、2 番目より `MARGIN` 以上高いこと
 //! - 数字: 1 文字ずつ一番近い字を取り、どの字も `GLYPH_MIN` 以上で、形（桁数と小数 1 桁）が合うこと
 //!
-//! まだ読まないもの: 個人リザルトの「無効試合」「負けとして…」の文言、ルール紹介、バトル中、進行、
+//! まだ読まないもの: 個人リザルトの「無効試合」「負けとして…」の文言、バトル中、進行、
 //! バンカラの精算、計測中。見本の登録の場所を足してから読む。
 
 use image::RgbImage;
@@ -20,6 +20,7 @@ use crate::NO_SIGNAL_DARK;
 const SHIFT: u32 = 4;
 /// 2 番目のラベルとの差
 const MARGIN: f64 = 0.2;
+const RULE_INTRO_MIN: f64 = 0.6;
 const OUTCOME_MIN: f64 = 0.6;
 /// モードの見出しは字が小さく、白黒にすると線が途切れやすい（ぼけた見本で 0.35）
 const MODE_MIN: f64 = 0.4;
@@ -97,7 +98,7 @@ impl Recognizer {
         let scores = self.scores(work, place);
         let (first, second) = top2(&scores);
         let first = first?;
-        notes.push(format!("{} {} {:.2}（次 {:.2}）", place.id, first.label, first.score, second));
+        notes.push(format!("{}: {} 一致度 {:.2}（2 番目 {:.2}）", place.short, first.label, first.score, second));
         (first.score >= min && first.score - second >= MARGIN).then(|| first.label.clone())
     }
 
@@ -156,6 +157,18 @@ impl Recognizer {
 
     fn recognize_work(&self, work: &RgbImage, notes: &mut Vec<String>) -> Seen {
         let p = |id| place(id).expect("場所の名前");
+        let rule = |l: String| match l.as_str() {
+            "area" => Some(Rule::Area),
+            "yagura" => Some(Rule::Yagura),
+            "hoko" => Some(Rule::Hoko),
+            "asari" => Some(Rule::Asari),
+            _ => None,
+        };
+
+        // 試合は必ずルール紹介から始まる
+        if let Some(r) = self.decide(work, p("rule_intro"), RULE_INTRO_MIN, notes).and_then(rule) {
+            return Seen::RuleIntro(r);
+        }
 
         if let Some(l) = self.decide(work, p("outcome"), OUTCOME_MIN, notes) {
             match l.as_str() {
@@ -172,25 +185,19 @@ impl Recognizer {
                 "bankara_open" => Mode::BankaraOpen,
                 _ => Mode::Other,
             };
-            let rule = self.decide(work, p("rule"), RULE_MIN, notes).and_then(|l| match l.as_str() {
-                "area" => Some(Rule::Area),
-                "yagura" => Some(Rule::Yagura),
-                "hoko" => Some(Rule::Hoko),
-                "asari" => Some(Rule::Asari),
-                _ => None,
-            });
+            let rule = self.decide(work, p("rule"), RULE_MIN, notes).and_then(rule);
             return Seen::Header { mode, rule, note: Note::None };
         }
 
         let label = self.scores(work, p("power_label"));
         if let Some(s) = label.first() {
-            notes.push(format!("power_label {:.2}", s.score));
+            notes.push(format!("「Xパワー」: 一致度 {:.2}", s.score));
             if s.score >= POWER_LABEL_MIN {
                 let n = self.read_glyphs(work, p("power_number"));
-                notes.push(format!("power_number {}", n.text));
+                notes.push(format!("Xパワー: {}", n.text));
                 if let Some(value) = parse_power(&n.text) {
                     let d = self.read_glyphs(work, p("power_delta"));
-                    notes.push(format!("power_delta {}", d.text));
+                    notes.push(format!("増減: {}", d.text));
                     return Seen::XPower { value, delta: parse_delta(&d.text) };
                 }
             }
@@ -275,6 +282,10 @@ mod with_samples {
             ("rule", "042128", "asari"),
             ("rule", "050430", "hoko"),
             ("power_label", "033034", "x_power"),
+            ("rule_intro", "040228", "area"),
+            ("rule_intro", "132222", "yagura"),
+            ("rule_intro", "041551", "hoko"),
+            ("rule_intro", "040958", "asari"),
         ] {
             let p = place(place_id).unwrap();
             t.add(p.pool, label, cut(&load(key), p)).unwrap();
@@ -304,7 +315,8 @@ mod with_samples {
         assert_eq!(see("033345"), Seen::XPower { value: 2194.6, delta: Some(94.6) });
         // 7 の見本が無いので増減は読めない
         assert_eq!(see("101625"), Seen::XPower { value: 2336.8, delta: None });
-        for key in ["031924", "032333", "040228", "033416", "040905", "042113"] {
+        assert_eq!(see("132222"), Seen::RuleIntro(Rule::Yagura));
+        for key in ["031924", "032333", "033416", "040905", "042113", "041735"] {
             assert_eq!(see(key), Seen::Unknown, "{key} は何でもない");
         }
         let _ = std::fs::remove_dir_all(&dir);

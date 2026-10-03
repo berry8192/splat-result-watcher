@@ -30,6 +30,8 @@ pub fn to_work(game: &RgbImage) -> RgbImage {
 /// 見本の種類（どの見本の山に入れるか）
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Pool {
+    /// 試合の始まりのルール紹介
+    RuleIntro,
     Outcome,
     Mode,
     Rule,
@@ -41,10 +43,11 @@ pub enum Pool {
 }
 
 impl Pool {
-    pub const ALL: [Pool; 6] = [Pool::Outcome, Pool::Mode, Pool::Rule, Pool::PowerLabel, Pool::Digit, Pool::DigitSmall];
+    pub const ALL: [Pool; 7] = [Pool::RuleIntro, Pool::Outcome, Pool::Mode, Pool::Rule, Pool::PowerLabel, Pool::Digit, Pool::DigitSmall];
 
     pub fn dir_name(self) -> &'static str {
         match self {
+            Pool::RuleIntro => "rule_intro",
             Pool::Outcome => "outcome",
             Pool::Mode => "mode",
             Pool::Rule => "rule",
@@ -69,6 +72,8 @@ pub enum Kind {
 pub struct Place {
     pub id: &'static str,
     pub name: &'static str,
+    /// 途中経過に出す短い名前
+    pub short: &'static str,
     pub roi: Roi,
     /// 白黒にするしきい値（R・G・B の最小値がこれ以上なら白）
     pub min: u8,
@@ -90,8 +95,18 @@ pub const POWER_LABEL_LABELS: &[(&str, &str)] = &[("x_power", "「Xパワー」�
 /// 座標は基準 1536×864 のゲーム穴の中（docs/design.md の「見本で分かったこと」）
 pub const PLACES: &[Place] = &[
     Place {
+        id: "rule_intro",
+        name: "ルール紹介（試合の始まりの中央の大きな字の 2 行目。ホコは「バトル」）",
+        short: "ルール紹介",
+        roi: Roi::new(640, 405, 260, 95),
+        min: WHITE_MIN,
+        pool: Pool::RuleIntro,
+        kind: Kind::Labels(RULE_LABELS),
+    },
+    Place {
         id: "outcome",
         name: "勝敗（結果発表の左上の WIN! / LOSE...）",
+        short: "勝敗",
         roi: Roi::new(36, 45, 220, 75),
         min: WHITE_MIN,
         pool: Pool::Outcome,
@@ -100,6 +115,7 @@ pub const PLACES: &[Place] = &[
     Place {
         id: "mode",
         name: "モード（個人リザルトの右上の見出し）",
+        short: "モード",
         roi: Roi::new(668, 36, 150, 26),
         min: WHITE_MIN,
         pool: Pool::Mode,
@@ -108,6 +124,7 @@ pub const PLACES: &[Place] = &[
     Place {
         id: "rule",
         name: "ルール（個人リザルトの見出し。「ガチ」の後ろ）",
+        short: "ルール",
         roi: Roi::new(722, 68, 66, 40),
         min: WHITE_MIN,
         pool: Pool::Rule,
@@ -116,6 +133,7 @@ pub const PLACES: &[Place] = &[
     Place {
         id: "power_label",
         name: "X パワーの画面の「Xパワー」の文字",
+        short: "「Xパワー」",
         roi: Roi::new(425, 440, 150, 55),
         min: WHITE_MIN,
         pool: Pool::PowerLabel,
@@ -124,6 +142,7 @@ pub const PLACES: &[Place] = &[
     Place {
         id: "power_number",
         name: "X パワーの大きな数字",
+        short: "Xパワー",
         roi: Roi::new(590, 515, 370, 100),
         min: WHITE_MIN,
         pool: Pool::Digit,
@@ -132,6 +151,7 @@ pub const PLACES: &[Place] = &[
     Place {
         id: "power_delta",
         name: "X パワーの増減（右のしぶきの上）",
+        short: "増減",
         roi: Roi::new(965, 440, 140, 55),
         min: 140,
         pool: Pool::DigitSmall,
@@ -140,6 +160,7 @@ pub const PLACES: &[Place] = &[
     Place {
         id: "calibrated_number",
         name: "計測完了の数字",
+        short: "計測完了",
         roi: Roi::new(560, 460, 440, 120),
         min: WHITE_MIN,
         pool: Pool::Digit,
