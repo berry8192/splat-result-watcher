@@ -14,4 +14,7 @@ WebSocket（既定 `ws://127.0.0.1:3140/events`）で流す単独アプリ。受
 - `target/release/splat-result-watcher.exe shot [out.png] [--width 1920]` … 1 枚撮って時間を測る（N Air が起きていること）
 - `target/release/splat-result-watcher.exe snap <説明…> [--full]` … 1 枚撮ってゲーム穴を PNG で残す（`samples/snaps/`、説明は `index.tsv` にも）
 - `target/release/splat-result-watcher.exe record [--dir D] [--width 1280] [--cap-gb 20] [--full]` … 見本の録画（ゲーム穴だけ）。Ctrl+C で止める
+- `target/release/splat-result-watcher.exe serve [--record]` … 撮って読み、`ws://127.0.0.1:3140/events` で流す（照合はまだ映像の有無だけ）。`--record` で見本の録画も一緒に回す。出来事の控えは `%LOCALAPPDATA%\splat-result-watcher\events.jsonl`
+- `target/release/splat-result-watcher.exe probe` … 見本（`samples/snaps/`）で照合を試す
+- `cargo test --release` … 状態の移り変わり（src/state.rs）とサーバ（src/server.rs）の試験
 - ゲーム穴は固定（スプラの配信は配置を変えない）。`src/layout.rs`

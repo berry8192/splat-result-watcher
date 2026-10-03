@@ -1,4 +1,4 @@
-//! splat-result-watcher。いまは撮影と見本集めだけ。
+//! splat-result-watcher。撮影・見本集め・照合の試し・WebSocket で流す骨組み。
 //!
 //! - `splat-result-watcher shot [出力.png] [--width 1920]`
 //!   プロジェクターを開いて 1 枚撮り、PNG で書き出す（ゲーム穴だけのものも `_game` を付けて）。
@@ -9,6 +9,8 @@
 //!   0.5 秒ごとに撮り、ゲーム穴（layout.rs）だけを JPEG で残す（見本集め）。Ctrl+C で止める。
 //!   `--width` は出力を撮る幅（撮影の時間は面積に比例し、1920 だと 20ms を超えて 1 秒ごとに落ちる）。
 //!   `--full` なら出力をまるごと残す
+//! - `splat-result-watcher serve [--addr 127.0.0.1:3140] [--width 1280] [--record]`
+//!   撮って読み、WebSocket で流す（照合はまだ映像の有無だけ）。`--record` で見本の録画も回す
 //! - `splat-result-watcher probe [--dir <見本>] [--width 1024]`
 //!   見本で照合を試す（2 値とグレーの一致度と時間。試しのためのもの）
 
@@ -17,6 +19,9 @@ mod matching;
 mod nair;
 mod probe;
 mod recorder;
+mod serve;
+mod server;
+mod state;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,27 +36,27 @@ use nair::Projector;
 use recorder::{Recorder, RecorderConfig};
 
 /// 撮る間隔。1 回の撮影が重ければ（平均 20ms 超）1 秒に落とす
-const INTERVAL: Duration = Duration::from_millis(500);
+pub(crate) const INTERVAL: Duration = Duration::from_millis(500);
 const SLOW_INTERVAL: Duration = Duration::from_secs(1);
 const SLOW_CAPTURE_MS: f64 = 20.0;
 /// これより黒い絵は「映像が来ていない」として残さない
-const NO_SIGNAL_DARK: f64 = 0.98;
+pub(crate) const NO_SIGNAL_DARK: f64 = 0.98;
 
-static STOP: AtomicBool = AtomicBool::new(false);
+pub(crate) static STOP: AtomicBool = AtomicBool::new(false);
 
-unsafe extern "system" fn on_ctrl(_: u32) -> BOOL {
+pub(crate) unsafe extern "system" fn on_ctrl(_: u32) -> BOOL {
     STOP.store(true, Ordering::SeqCst);
     true.into()
 }
 
 /// 見本の置き場所。repo の `samples/`（git 管理外。ゲーム画面の切り抜きは同梱しない）。
 /// exe をどこから起動しても同じ所に貯まるよう、ビルドしたときの repo の場所を使う
-fn samples_dir() -> PathBuf {
+pub(crate) fn samples_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("samples")
 }
 
 /// 人が見ない内部のファイル（閉じ損ねたプロジェクターの控えなど）の置き場所
-fn data_dir() -> PathBuf {
+pub(crate) fn data_dir() -> PathBuf {
     let base = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
@@ -64,11 +69,13 @@ fn main() {
         Some("shot") => shot(&args[1..]),
         Some("snap") => snap(&args[1..]),
         Some("record") => record(&args[1..]),
+        Some("serve") => serve::run(&args[1..]),
         Some("probe") => probe::run(&args[1..], &samples_dir()),
         _ => {
             eprintln!("使い方: splat-result-watcher shot [出力.png] [--width 1920]");
             eprintln!("        splat-result-watcher snap <説明…> [--full] [--width 1920] [--dir <置き場所>]");
             eprintln!("        splat-result-watcher record [--dir <置き場所>] [--width 1280] [--quality 85] [--cap-gb 20] [--full]");
+            eprintln!("        splat-result-watcher serve [--addr 127.0.0.1:3140] [--width 1280] [--record]");
             eprintln!("        splat-result-watcher probe [--dir <見本>] [--width 1024]");
             std::process::exit(2);
         }
@@ -79,7 +86,7 @@ fn main() {
     }
 }
 
-fn open_projector(width: u32) -> Result<Projector> {
+pub(crate) fn open_projector(width: u32) -> Result<Projector> {
     let dir = data_dir();
     std::fs::create_dir_all(&dir)?;
     Projector::open(Some(&dir.join("projector.hwnd")), width)
