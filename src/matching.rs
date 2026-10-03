@@ -142,10 +142,12 @@ pub fn ncc(t: &Patch, s: &Patch) -> f64 {
 /// 数字の見本をそろえる大きさ（縦横の比は保ち、高さを合わせて横は真ん中に置く）
 const GLYPH_H: u32 = 30;
 const GLYPH_W: u32 = 30;
-/// 行の高さに対してこれより低いかたまりは、小数点かマイナス（形で決まるので見本は要らない）
-const DOT_MAX_H: f64 = 0.4;
-/// 低いかたまりのうち、幅が高さのこれ倍以上ならマイナス（横棒）、それ以外は小数点
-const MINUS_MIN_RATIO: f64 = 1.8;
+/// 行の高さに対してこれより低いかたまりは、小数点かマイナス（形で決まるので見本は要らない）。
+/// TOTAL の前の「=」（数字の半分弱の高さ）もここに入る（横に長いのでマイナス扱い）
+const DOT_MAX_H: f64 = 0.5;
+/// 低いかたまりの真ん中が、行（高い字の上端〜下端）のこの割合より下なら小数点、上ならマイナス。
+/// 小さい字では小数点も横に長くなるので、形ではなく高さの位置で分ける
+const DOT_MIN_POS: f64 = 0.7;
 
 /// 数字の 1 文字ぶん
 #[derive(Clone, Debug)]
@@ -190,13 +192,22 @@ pub fn glyphs(p: &Patch) -> Vec<Glyph> {
         })
         .collect();
     let line_h = boxes.iter().map(|b| b.3 - b.2).max().unwrap_or(0);
+    // 行の上端と下端は、高い字の中央値（p の下に出る部分に引っぱられない）
+    let median = |mut v: Vec<u32>| {
+        v.sort_unstable();
+        v.get(v.len() / 2).copied()
+    };
+    let tall: Vec<_> = boxes.iter().filter(|b| (b.3 - b.2) as f64 >= DOT_MAX_H * line_h as f64).collect();
+    let top = median(tall.iter().map(|b| b.2).collect()).unwrap_or(0) as f64;
+    let bottom = median(tall.iter().map(|b| b.3).collect()).unwrap_or(p.h) as f64;
     boxes
         .into_iter()
         .filter(|b| b.4 as f64 >= NOISE_PX * line_h as f64)
         .map(|(x0, x1, y0, y1, _)| {
             let (w, h) = (x1 - x0, y1 - y0);
             if (h as f64) < DOT_MAX_H * line_h as f64 {
-                return if w as f64 >= MINUS_MIN_RATIO * h as f64 { Glyph::Minus } else { Glyph::Dot };
+                let center = (y0 + y1) as f64 / 2.0;
+                return if center >= top + DOT_MIN_POS * (bottom - top) { Glyph::Dot } else { Glyph::Minus };
             }
             // 高さを GLYPH_H に合わせ、横は比を保って真ん中に置く（最近傍）
             let sw = ((w as f64 * GLYPH_H as f64 / h as f64).round() as u32).clamp(1, GLYPH_W);

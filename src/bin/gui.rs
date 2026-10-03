@@ -18,7 +18,7 @@ use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 use splat_result_watcher::engine::{Engine, Snapshot};
 use splat_result_watcher::settings::Settings;
-use splat_result_watcher::matching::{self, Glyph, Patch};
+use splat_result_watcher::matching::{Glyph, Patch};
 use splat_result_watcher::nair;
 use splat_result_watcher::recognize::{GlyphRead, Score};
 use splat_result_watcher::templates::{self, glyph_label, place, Kind, Pool, TemplateInfo, PLACES, WORK_W};
@@ -279,7 +279,7 @@ fn register_glyphs(app: State<App>, place_id: String, text: String) -> Res<usize
         return Err("数字の場所ではない".into());
     }
     let src = app.source.lock().unwrap().clone().ok_or("元の絵を選んでいない")?;
-    let glyphs = matching::glyphs(&templates::cut(&src, p));
+    let glyphs = templates::cut_glyphs(&src, p);
     let chars: Vec<char> = text.trim().chars().collect();
     if chars.len() != glyphs.len() {
         return Err(format!("{} 文字に切れている（入れたのは {} 文字）", glyphs.len(), chars.len()));

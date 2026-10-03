@@ -7,9 +7,10 @@
 //! - **試合はルール紹介から始まる**: 紹介を見たら、いつでも新しい試合を始める（前の試合はそろった分を出して閉じる）。
 //!   紹介を見落としたときは、久しぶり（30 秒以上ぶり）に映った勝敗の画面で始める。
 //!   ロビーで戦績を見返したときの勝敗の画面は、久しぶりでなければ数えない
-//! - **`result` は勝敗とモードがそろったら出す**: モードは個人リザルトの見出しで読む。X パワーの画面が
-//!   読めたら X、バンカラの精算が読めたらチャレンジと分かるので、見出しを見落としても出せる。
-//!   モードが「その他」（ナワバリなど）なら出さない
+//! - **`result` は勝敗とモードがそろったら出す**: モードは個人リザルトの見出し、マッチング中の画面
+//!   （紹介の直前まで見ていたもの）、X パワーの画面（X）、バンカラの精算（チャレンジ）のどれかで分かればよい。
+//!   WIN はすぐ出す。LOSE は見出しの「負けとしてカウントされませんでした」を待ち、見出しを見落としたまま
+//!   次の試合・時間切れになったら lose で出す。モードが「その他」（ナワバリなど）なら出さない
 //! - **値は落ち着いた最後のものを取る**: 3 フレーム同じなら候補にし、画面が消えるまで上書きする。
 //!   計算で確かめられるもの（旧値＋増減）は合った時点で出す。合わない・確かめられないものは出さない
 //! - 段階（`status`）は積んだ事実から決める: 試合が無い → idle、勝敗がまだ → in_battle、
@@ -81,6 +82,8 @@ pub enum Seen {
     NoSignal,
     /// どれにも当てはまらない
     Unknown,
+    /// マッチング中の画面（左のパネルの「Xパワー」「ウデマエ」でモードが分かる）
+    Matching(Mode),
     /// 試合の始まりの「ルール ガチ〇〇」
     RuleIntro(Rule),
     /// 試合中に出る「…無効試合になりました」の札
@@ -97,6 +100,8 @@ pub enum Seen {
     Calibrated(f64),
     /// バンカラの精算。`value` はゲージの下の今のポイント、`total` は「TOTAL = n p」（読めたときだけ）
     Udemae { value: i32, total: Option<i32> },
+    /// 昇格の画面「300p ウデマエポイントはリセットされます」
+    UdemaeReset(i32),
     /// 進行の「WIN LOSE n - m」。`stamps` は WIN の判子の数（読めたときだけ）
     Progress { wins: u8, losses: u8, stamps: Option<u8> },
 }
@@ -144,6 +149,9 @@ const INTRO_BLINK: i64 = 10;
 const OUTCOME_GAP: i64 = 30;
 /// 勝敗の画面がこれより短く途切れても、同じ一続きとみなす（照合の取りこぼし）
 const OUTCOME_BLINK: i64 = 3;
+/// マッチング中の画面を最後に見てから、これより後に始まった試合にはそのモードを持たせない
+/// （マッチングをやめて別のモードに行ったときに持ち越さない）
+const MATCHING_FRESH: i64 = 60;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -234,6 +242,10 @@ struct Post {
     #[serde(skip)]
     progress: Settle<(u8, u8)>,
     progress_done: bool,
+    #[serde(skip)]
+    reset: Settle<i32>,
+    #[serde(default)]
+    reset_done: bool,
 }
 
 impl Post {
@@ -250,6 +262,8 @@ impl Post {
             udemae_done: false,
             progress: Settle::new(STABLE),
             progress_done: false,
+            reset: Settle::new(STABLE),
+            reset_done: false,
         }
     }
 }
@@ -266,6 +280,9 @@ struct Game {
     header: Option<(Mode, Option<Rule>, Note)>,
     /// 試合後の画面から分かったモード（X パワー → X、精算 → チャレンジ）
     implied_mode: Option<Mode>,
+    /// 紹介の直前のマッチング中の画面で分かったモード
+    #[serde(default)]
+    matching_mode: Option<Mode>,
     /// `result` を出した（その他のモードで出さないと決めたときも true）
     settled: bool,
     counted: bool,
@@ -280,7 +297,7 @@ impl Game {
     }
 
     fn mode(&self) -> Option<Mode> {
-        self.header.map(|h| h.0).or(self.implied_mode)
+        self.header.map(|h| h.0).or(self.implied_mode).or(self.matching_mode)
     }
 
     fn rule(&self) -> Option<Rule> {
@@ -300,6 +317,9 @@ pub struct Machine {
     outcome: Settle<Outcome>,
     nc: Settle<()>,
     header: Settle<(Mode, Option<Rule>, Note)>,
+    matching: Settle<Mode>,
+    /// マッチング中の画面で分かったモードと、最後にその画面を見た時刻
+    pending_mode: Option<(Mode, DateTime<Utc>)>,
     /// 勝敗の画面が映っている一続き（始まり, 最後に見た時刻）と、それが久しぶりに映ったものか
     episode: Option<(DateTime<Utc>, DateTime<Utc>)>,
     episode_fresh: bool,
@@ -328,6 +348,8 @@ impl Machine {
             outcome: Settle::new(STABLE),
             nc: Settle::new(STABLE),
             header: Settle::new(STABLE),
+            matching: Settle::new(STABLE),
+            pending_mode: None,
             episode: None,
             episode_fresh: false,
             serial: 0,
@@ -399,6 +421,20 @@ impl Machine {
             }
         }
 
+        // マッチング中の画面: これからの試合のモード
+        let mm = match &seen {
+            Seen::Matching(m) => Some(*m),
+            _ => None,
+        };
+        if self.matching.push(mm) {
+            self.pending_mode = self.matching.latest.map(|m| (m, at));
+        }
+        if let (Some(m), Some((pm, t))) = (mm, &mut self.pending_mode) {
+            if *pm == m {
+                *t = at;
+            }
+        }
+
         // ルール紹介: 新しい試合（ちらついて 2 回落ち着いたものは同じ試合）
         let intro = match &seen {
             Seen::RuleIntro(r) => Some(*r),
@@ -422,8 +458,16 @@ impl Machine {
                 }
             } else {
                 self.close(at, &mut out);
-                let g = self.open(at, r);
+                let mut g = self.open(at, r);
+                g.matching_mode = self
+                    .pending_mode
+                    .take()
+                    .filter(|(_, t)| at - *t <= Duration::seconds(MATCHING_FRESH))
+                    .map(|(m, _)| m);
                 let mut ev = json!({"type": "battle_started", "match_id": g.id, "at": time(at)});
+                if let Some(m) = g.matching_mode {
+                    ev["mode"] = m.as_str().into();
+                }
                 if let Some(r) = r {
                     ev["rule"] = r.as_str().into();
                 }
@@ -485,14 +529,14 @@ impl Machine {
         if let Some(g) = &mut self.game {
             match &seen {
                 Seen::XPower { .. } | Seen::Calibrating | Seen::Calibrated(_) => g.implied_mode = Some(Mode::X),
-                Seen::Udemae { .. } => g.implied_mode = Some(Mode::BankaraChallenge),
+                Seen::Udemae { .. } | Seen::UdemaeReset(_) => g.implied_mode = Some(Mode::BankaraChallenge),
                 _ => {}
             }
         }
 
         let mut close = false;
         if let Some(g) = &mut self.game {
-            Self::try_result(g, &mut out);
+            Self::try_result(g, false, &mut out);
             if g.settled && g.counted {
                 Self::post(g, at, &seen, &mut out);
             }
@@ -522,6 +566,7 @@ impl Machine {
             ended_at: None,
             header: None,
             implied_mode: None,
+            matching_mode: None,
             settled: false,
             counted: false,
             last_fact: at,
@@ -532,7 +577,7 @@ impl Machine {
     /// 今の試合を閉じる。出せるものは出してから（`result` を出せなかった試合は何も出さない）
     fn close(&mut self, at: DateTime<Utc>, out: &mut Vec<Value>) {
         if let Some(mut g) = self.game.take() {
-            Self::try_result(&mut g, out);
+            Self::try_result(&mut g, true, out);
             if g.settled && g.counted {
                 let p = &mut g.post;
                 p.xp.absent = p.xp.absent.max(GONE);
@@ -544,8 +589,8 @@ impl Machine {
         }
     }
 
-    /// 勝敗とモードがそろっていれば `result` を出す
-    fn try_result(g: &mut Game, out: &mut Vec<Value>) {
+    /// 勝敗とモードがそろっていれば `result` を出す。`last` は試合を閉じるとき（見出しを待つのをやめる）
+    fn try_result(g: &mut Game, last: bool, out: &mut Vec<Value>) {
         if g.settled {
             return;
         }
@@ -554,6 +599,11 @@ impl Machine {
             return;
         }
         let Some(mode) = g.mode() else { return };
+        // LOSE は「負けとしてカウントされませんでした」が見出しに付くかもしれないので、見出しを待つ
+        // （試合後の画面でモードが分かったなら、見出しはもう過ぎている）
+        if g.outcome == Some(Outcome::Lose) && g.header.is_none() && g.implied_mode.is_none() && !last {
+            return;
+        }
         g.settled = true;
         if mode == Mode::Other {
             return;
@@ -625,6 +675,17 @@ impl Machine {
                     Self::power_udemae(g, at, Some(before), after, out);
                 }
             }
+        }
+
+        // 昇格でウデマエポイントがリセットされた（前の値は出さない）
+        let reset = match seen {
+            Seen::UdemaeReset(v) => Some(*v),
+            _ => None,
+        };
+        if g.post.reset.push(reset) && !g.post.reset_done {
+            g.post.reset_done = true;
+            out.push(json!({"type": "power", "match_id": g.id, "kind": "udemae",
+                "before": null, "after": g.post.reset.latest, "at": time(at)}));
         }
 
         // 進行: WIN の判子の数と勝ち数が合うときだけ数える（数字は判子の後から変わる）
@@ -967,6 +1028,50 @@ mod tests {
         let mut m = Machine::new(Config::default());
         assert!(m.restore(&saved, at + Duration::seconds(READ_TIMEOUT + 60)).is_none());
         assert_eq!(m.stage(), Stage::Idle);
+    }
+
+    #[test]
+    fn matching_mode_lets_win_out_early_and_lose_wait_for_the_header() {
+        // マッチング中の画面で X と分かっていれば、WIN は見出しを待たずに出す
+        let mut r = Run::new();
+        r.feed(Seen::Matching(Mode::X), 40).feed(Seen::Unknown, 4).intro(Rule::Area);
+        assert_eq!(r.of("battle_started")[0]["mode"], "x");
+        r.feed(win(), 4);
+        assert_eq!(r.of("result")[0]["mode"], "x");
+        assert_eq!(r.of("result")[0]["outcome"], "win");
+
+        // LOSE は見出しを待つ（負けとして数えない文言が付くかもしれない）
+        let mut r = Run::new();
+        r.feed(Seen::Matching(Mode::BankaraChallenge), 10).intro(Rule::Asari).feed(Seen::Outcome(Outcome::Lose), 6);
+        assert!(r.of("result").is_empty());
+        r.wait(15).feed(header(Mode::BankaraChallenge, Rule::Asari, Note::Uncounted), 4);
+        assert_eq!(r.of("result")[0]["outcome"], "lose_uncounted");
+
+        // 見出しを見落としたまま次の試合が始まったら、マッチングのモードで lose を出す
+        let mut r = Run::new();
+        r.feed(Seen::Matching(Mode::X), 10).intro(Rule::Area).feed(Seen::Outcome(Outcome::Lose), 6).wait(30);
+        r.feed(Seen::RuleIntro(Rule::Hoko), 4);
+        assert_eq!(r.types(), ["battle_started", "result", "battle_started"]);
+        assert_eq!(r.of("result")[0]["outcome"], "lose");
+
+        // マッチングから時間が空いた（やめて別のモードに行った）ならモードを持ち越さない
+        let mut r = Run::new();
+        r.feed(Seen::Matching(Mode::X), 10).wait(MATCHING_FRESH + 10).intro(Rule::Area).feed(win(), 4);
+        assert!(r.of("battle_started")[0].get("mode").is_none());
+        assert!(r.of("result").is_empty());
+    }
+
+    #[test]
+    fn promotion_resets_udemae() {
+        let mut r = Run::new();
+        r.intro(Rule::Asari).feed(win(), 6).wait(5).feed(header(Mode::BankaraChallenge, Rule::Asari, Note::None), 4);
+        r.events.clear();
+        r.feed(Seen::UdemaeReset(300), 6);
+        let p = r.of("power");
+        assert_eq!(p.len(), 1);
+        assert_eq!(p[0]["kind"], "udemae");
+        assert!(p[0]["before"].is_null());
+        assert_eq!(p[0]["after"].as_i64(), Some(300));
     }
 
     #[test]

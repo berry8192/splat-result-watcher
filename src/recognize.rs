@@ -4,8 +4,8 @@
 //! - 決まった文字の絵: 一番近いラベルの一致度がしきい値以上で、2 番目より `MARGIN` 以上高いこと
 //! - 数字: 1 文字ずつ一番近い字を取り、どの字も `GLYPH_MIN` 以上で、形（桁数と小数 1 桁）が合うこと
 //!
-//! まだ読まないもの: 個人リザルトの「無効試合」「負けとして…」の文言、バトル中、進行、
-//! バンカラの精算、計測中。見本の登録の場所を足してから読む。
+//! まだ読まないもの: 個人リザルトの「無効試合」「負けとして…」の文言、進行、計測中、バンカラの参加費。
+//! 見本の登録の場所を足してから読む。
 
 use image::RgbImage;
 use serde::Serialize;
@@ -26,6 +26,8 @@ const OUTCOME_MIN: f64 = 0.6;
 const MODE_MIN: f64 = 0.4;
 const RULE_MIN: f64 = 0.6;
 const POWER_LABEL_MIN: f64 = 0.6;
+const MATCHING_MIN: f64 = 0.6;
+const UDEMAE_TITLE_MIN: f64 = 0.6;
 /// 数字の 1 文字（正しい字は 0.87 以上、2 番目に近い字は 0.79 以下だった）
 pub const GLYPH_MIN: f64 = 0.85;
 
@@ -59,6 +61,14 @@ pub struct Recognizer {
 /// 一番よいものと 2 番目
 fn top2(scores: &[Score]) -> (Option<&Score>, f64) {
     (scores.first(), scores.get(1).map_or(0.0, |s| s.score))
+}
+
+impl GlyphRead {
+    /// 途中経過に出す形（読み と 1 文字ずつの一致度）
+    pub fn note(&self) -> String {
+        let each: Vec<String> = self.chars.iter().filter(|(c, _)| *c != '.' && *c != '-').map(|(c, v)| format!("{c}{v:.2}")).collect();
+        format!("{}（{}）", self.text, each.join(" "))
+    }
 }
 
 impl Recognizer {
@@ -104,7 +114,7 @@ impl Recognizer {
 
     /// 切り出した 1 文字ずつ（GUI で見せる・登録する）
     pub fn glyphs(&self, work: &RgbImage, place: &Place) -> Vec<Glyph> {
-        matching::glyphs(&templates::cut(work, place))
+        templates::cut_glyphs(work, place)
     }
 
     /// 数字を読む
@@ -193,15 +203,38 @@ impl Recognizer {
             return Seen::Header { mode, rule, note: Note::None };
         }
 
+        if let Some(l) = self.decide(work, p("matching"), MATCHING_MIN, notes) {
+            // 「ウデマエ」ではチャレンジとオープンを見分けられない（オープンは当面対応しない）
+            return Seen::Matching(if l == "x" { Mode::X } else { Mode::BankaraChallenge });
+        }
+
+        if let Some(l) = self.decide(work, p("udemae_title"), UDEMAE_TITLE_MIN, notes) {
+            if l == "promoted" {
+                let n = self.read_glyphs(work, p("udemae_reset"));
+                notes.push(format!("リセット: {}", n.note()));
+                if let Some(v) = parse_points(&n.text) {
+                    return Seen::UdemaeReset(v);
+                }
+            } else {
+                let n = self.read_glyphs(work, p("udemae_value"));
+                notes.push(format!("ウデマエ: {}", n.note()));
+                if let Some(value) = parse_points(&n.text) {
+                    let t = self.read_glyphs(work, p("udemae_total"));
+                    notes.push(format!("TOTAL: {}", t.note()));
+                    return Seen::Udemae { value, total: parse_points(&t.text) };
+                }
+            }
+        }
+
         let label = self.scores(work, p("power_label"));
         if let Some(s) = label.first() {
             notes.push(format!("「Xパワー」: 一致度 {:.2}", s.score));
             if s.score >= POWER_LABEL_MIN {
                 let n = self.read_glyphs(work, p("power_number"));
-                notes.push(format!("Xパワー: {}", n.text));
+                notes.push(format!("Xパワー: {}", n.note()));
                 if let Some(value) = parse_power(&n.text) {
                     let d = self.read_glyphs(work, p("power_delta"));
-                    notes.push(format!("増減: {}", d.text));
+                    notes.push(format!("増減: {}", d.note()));
                     return Seen::XPower { value, delta: parse_delta(&d.text) };
                 }
             }
@@ -216,6 +249,13 @@ pub fn parse_power(s: &str) -> Option<f64> {
     let ok = (3..=4).contains(&i.len())
         && f.len() == 1
         && i.bytes().chain(f.bytes()).all(|b| b.is_ascii_digit());
+    ok.then(|| s.parse().ok()).flatten()
+}
+
+/// ウデマエポイント「130」「-15」「1051」（p は切り出しで捨ててある）
+pub fn parse_points(s: &str) -> Option<i32> {
+    let digits = s.strip_prefix('-').unwrap_or(s);
+    let ok = (1..=4).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit());
     ok.then(|| s.parse().ok()).flatten()
 }
 
@@ -248,6 +288,10 @@ mod tests {
         assert_eq!(parse_delta("-117.0"), Some(-117.0));
         assert_eq!(parse_delta("+622"), None);
         assert_eq!(parse_delta("94.6"), None);
+        assert_eq!(parse_points("-15"), Some(-15));
+        assert_eq!(parse_points("1051"), Some(1051));
+        assert_eq!(parse_points("3?0"), None);
+        assert_eq!(parse_points("-"), None);
     }
 }
 
@@ -290,6 +334,11 @@ mod with_samples {
             ("rule_intro", "132222", "yagura"),
             ("rule_intro", "041551", "hoko"),
             ("rule_intro", "040958", "asari"),
+            ("udemae_title", "040440", "finish"),
+            ("udemae_title", "040820", "clear"),
+            ("udemae_title", "041716", "promoted"),
+            ("matching", "032333", "x"),
+            ("matching", "040151", "bankara"),
         ] {
             let p = place(place_id).unwrap();
             t.add(p.pool, label, cut(&load(key), p)).unwrap();
@@ -302,10 +351,24 @@ mod with_samples {
             ("power_delta", "101601", "+25.0"),
             ("power_delta", "101431", "+62.2"),
             ("power_delta", "033306", "+94.6"),
+            ("udemae_value", "040440", "130"),
+            ("udemae_value", "041132", "685"),
+            ("udemae_value", "040820", "-15"),
+            ("udemae_value", "040905", "365"),
+            ("udemae_total", "040526", "25"),
+            ("udemae_total", "040905", "380"),
         ] {
             let p = place(place_id).unwrap();
-            let g = matching::glyphs(&cut(&load(key), p));
-            assert_eq!(g.len(), text.chars().count(), "{key} の切れ方");
+            let g = templates::cut_glyphs(&load(key), p);
+            let kinds: Vec<String> = g
+                .iter()
+                .map(|g| match g {
+                    Glyph::Dot => ".".into(),
+                    Glyph::Minus => "-".into(),
+                    Glyph::Shape(p) => format!("字{}", p.px.iter().map(|&v| v as u32).sum::<u32>()),
+                })
+                .collect();
+            assert_eq!(g.len(), text.chars().count(), "{key} の切れ方 {kinds:?}");
             for (c, g) in text.chars().zip(g) {
                 if let (Some(l), Glyph::Shape(g)) = (glyph_label(c), g) {
                     t.add(p.pool, &l, g).unwrap();
@@ -320,8 +383,18 @@ mod with_samples {
         // 7 の見本が無いので増減は読めない
         assert_eq!(see("101625"), Seen::XPower { value: 2336.8, delta: None });
         assert_eq!(see("132222"), Seen::RuleIntro(Rule::Yagura));
-        // メニュー・順位・精算・試合中（無効試合の札・バトル中・Finish!）・X に挑戦できる
-        let quiet = ["031924", "032333", "033416", "040905", "042113", "041735", "134014", "134030", "134042", "134056"];
+        // バンカラの精算: 見本にしなかった 155（130・685・-15・365 の見本から）と、TOTAL（大きな数字の見本）
+        let why = |key: &str| r.recognize(&load(key)).notes.join(" / ");
+        assert_eq!(see("040535"), Seen::Udemae { value: 155, total: Some(25) }, "{}", why("040535"));
+        assert_eq!(see("040526"), Seen::Udemae { value: 130, total: Some(25) }, "{}", why("040526"));
+        assert_eq!(see("040905"), Seen::Udemae { value: 365, total: Some(380) }, "{}", why("040905"));
+        assert_eq!(see("041716"), Seen::UdemaeReset(300), "{}", why("041716"));
+        assert_eq!(see("032333"), Seen::Matching(Mode::X));
+        assert_eq!(see("040151"), Seen::Matching(Mode::BankaraChallenge));
+        // メニュー・順位・試合中（無効試合の札・バトル中・Finish!）・X に挑戦できる・進行
+        let quiet = [
+            "031924", "033416", "042113", "041735", "134014", "134030", "134042", "134056", "040302", "041437",
+        ];
         for key in quiet {
             assert_eq!(see(key), Seen::Unknown, "{key} は何でもない");
         }
