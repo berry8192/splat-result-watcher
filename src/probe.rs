@@ -197,16 +197,32 @@ const POWER: Roi = Roi::new(590, 515, 370, 100);
 /// X の計測完了の数字（字が少し大きい）
 const CALIBRATED: Roi = Roi::new(560, 460, 440, 120);
 
-/// (ファイルの時刻, ROI, 書いてある数字)
-const NUMBERS: &[(&str, Roi, &str)] = &[
-    ("033034", POWER, "2100.0"),
-    ("033044", POWER, "2100.0"),
-    ("033100", POWER, "2100.0"),
-    ("033253", POWER, "2100.0"),
-    ("033306", POWER, "2111.0"),
-    ("033316", POWER, "2139.4"),
-    ("033345", POWER, "2194.6"),
-    ("041847", CALIBRATED, "1830.4"),
+/// X パワーの増減（水色のしぶきの上。しぶきは少し動く）
+const DELTA: Roi = Roi::new(965, 440, 140, 55);
+const DELTA_MIN: u8 = 140;
+const W: u8 = matching::WHITE_MIN;
+
+/// (ファイルの時刻, ROI, 2 値のしきい値, 書いてある数字)
+const NUMBERS: &[(&str, Roi, u8, &str)] = &[
+    ("033034", POWER, W, "2100.0"),
+    ("033044", POWER, W, "2100.0"),
+    ("033100", POWER, W, "2100.0"),
+    ("033253", POWER, W, "2100.0"),
+    ("033306", POWER, W, "2111.0"),
+    ("033316", POWER, W, "2139.4"),
+    ("033345", POWER, W, "2194.6"),
+    ("041847", CALIBRATED, W, "1830.4"),
+    ("101412", POWER, W, "2194.6"),
+    ("101431", POWER, W, "2256.8"),
+    ("101601", POWER, W, "2265.9"),
+    ("101625", POWER, W, "2336.8"),
+    ("033306", DELTA, DELTA_MIN, "+94.6"),
+    ("033316", DELTA, DELTA_MIN, "+94.6"),
+    ("033345", DELTA, DELTA_MIN, "+94.6"),
+    ("101412", DELTA, DELTA_MIN, "+62.2"),
+    ("101431", DELTA, DELTA_MIN, "+62.2"),
+    ("101601", DELTA, DELTA_MIN, "+25.0"),
+    ("101625", DELTA, DELTA_MIN, "+75.0"),
 ];
 
 /// 数字を 1 枚抜きで試す: 読む 1 枚以外から文字の見本を集め、その 1 枚を読む
@@ -214,13 +230,13 @@ fn digits(images: &[(String, RgbImage)]) -> Result<()> {
     println!("
 ## 数字（1 枚抜き: 読む 1 枚以外の見本で読む）");
     let mut cut = Vec::new();
-    for (key, roi, text) in NUMBERS {
+    for (key, roi, min, text) in NUMBERS {
         let img = images
             .iter()
             .find(|(n, _)| n.contains(key))
             .map(|(_, i)| i)
             .with_context(|| format!("見本 {key} が無い"))?;
-        let g = matching::glyphs(&matching::binary(img, *roi, 0));
+        let g = matching::glyphs(&matching::binary_at(img, *roi, 0, *min));
         if g.len() != text.chars().count() {
             println!("{key}: {} 文字に切れた（{} のはず）", g.len(), text);
         }

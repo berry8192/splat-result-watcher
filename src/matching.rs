@@ -61,7 +61,12 @@ fn cut(img: &RgbImage, roi: Roi, margin: u32, f: impl Fn([u8; 3]) -> u8) -> Patc
 }
 
 pub fn binary(img: &RgbImage, roi: Roi, margin: u32) -> Patch {
-    cut(img, roi, margin, |[r, g, b]| (r.min(g).min(b) >= WHITE_MIN) as u8)
+    binary_at(img, roi, margin, WHITE_MIN)
+}
+
+/// しきい値を変えて 2 値にする（明るい色の上の白い字など。X パワーの増減は水色のしぶきの上で 140）
+pub fn binary_at(img: &RgbImage, roi: Roi, margin: u32, min: u8) -> Patch {
+    cut(img, roi, margin, |[r, g, b]| (r.min(g).min(b) >= min) as u8)
 }
 
 pub fn gray(img: &RgbImage, roi: Roi, margin: u32) -> Patch {
@@ -140,7 +145,7 @@ const GLYPH_W: u32 = 30;
 /// 行の高さに対してこれより低い文字は小数点とみなす
 const DOT_MAX_H: f64 = 0.4;
 /// 白がこれより少ない列のかたまりはごみとして捨てる（行の高さに対する割合）
-const NOISE_PX: f64 = 0.5;
+const NOISE_PX: f64 = 0.15;
 
 /// 2 値の ROI を白い列のかたまりで 1 文字ずつに切る。小数点は `None`、それ以外は大きさをそろえた文字
 pub fn glyphs(p: &Patch) -> Vec<Option<Patch>> {
