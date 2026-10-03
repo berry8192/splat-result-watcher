@@ -359,6 +359,11 @@ impl Machine {
         Some(id)
     }
 
+    /// 今の試合を何も出さずに捨てる（手で待機に戻す）。捨てた試合の ID を返す
+    pub fn drop_game(&mut self) -> Option<String> {
+        self.game.take().map(|g| g.id)
+    }
+
     pub fn stage(&self) -> Stage {
         if self.dark >= NO_SIGNAL {
             return Stage::NoSignal;

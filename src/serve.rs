@@ -8,13 +8,19 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use windows::Win32::System::Console::SetConsoleCtrlHandler;
 
-use splat_result_watcher::engine::{Engine, EngineConfig};
+use splat_result_watcher::engine::Engine;
+use splat_result_watcher::settings::Settings;
 use splat_result_watcher::nair;
 
 use crate::{on_ctrl, STOP};
 
 pub fn run(args: &[String]) -> Result<()> {
-    let mut cfg = EngineConfig::default();
+    // 既定は GUI の設定（settings.json）。引数で上書きする
+    let (settings, warn) = Settings::load();
+    if let Some(w) = warn {
+        println!("{w}");
+    }
+    let mut cfg = settings.engine_config();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut val = || it.next().context(format!("{} の値が無い", a));

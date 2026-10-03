@@ -36,6 +36,8 @@ pub struct EngineConfig {
     pub width: u32,
     /// 見本の録画も回す
     pub record: bool,
+    /// 見本の録画の上限（バイト）
+    pub record_cap_bytes: u64,
     pub events_path: PathBuf,
     pub templates_dir: PathBuf,
     /// 今の試合の控え（落ちても、リザルトまでに起動し直せば続きから読む）
@@ -48,6 +50,7 @@ impl Default for EngineConfig {
             addr: crate::server::DEFAULT_ADDR.parse().unwrap(),
             width: 1280,
             record: false,
+            record_cap_bytes: 20 * 1024 * 1024 * 1024,
             events_path: data_dir().join("events.jsonl"),
             templates_dir: Templates::default_dir(),
             game_path: data_dir().join("current_game.json"),
@@ -72,6 +75,8 @@ pub struct Snapshot {
     pub record: bool,
     pub record_dir: Option<String>,
     pub server_error: Option<String>,
+    /// 足りない見本（設定の画面と見せる窓で知らせる）
+    pub template_gaps: Vec<String>,
     /// 流した出来事（新しい順）
     pub events: Vec<Value>,
     /// 記録の行（新しい順）
@@ -81,6 +86,8 @@ pub struct Snapshot {
 struct Shared {
     stop: AtomicBool,
     record: AtomicBool,
+    /// 今の試合を手で捨てる（次のフレームで）
+    reset_game: AtomicBool,
     snap: Mutex<Snapshot>,
     events: Mutex<VecDeque<Value>>,
     log: Mutex<VecDeque<String>>,
@@ -117,6 +124,7 @@ impl Engine {
         let shared = Arc::new(Shared {
             stop: AtomicBool::new(false),
             record: AtomicBool::new(cfg.record),
+            reset_game: AtomicBool::new(false),
             snap: Mutex::new(Snapshot {
                 stage: "idle".into(),
                 addr: format!("ws://{}/events", cfg.addr),
@@ -151,7 +159,7 @@ impl Engine {
         let s = shared.clone();
         let thread = std::thread::Builder::new()
             .name("capture".into())
-            .spawn(move || capture_loop(&s, cfg.width, &cfg.game_path))?;
+            .spawn(move || capture_loop(&s, &cfg))?;
         Ok(Engine { shared, thread: Some(thread), printed: 0 })
     }
 
@@ -162,6 +170,7 @@ impl Engine {
         snap.record = self.shared.record.load(Ordering::Relaxed);
         snap.events = self.shared.events.lock().unwrap().iter().cloned().collect();
         snap.log = self.shared.log.lock().unwrap().iter().cloned().collect();
+        snap.template_gaps = self.read_recognizer(|r| crate::templates::gaps(r.templates()));
         snap
     }
 
@@ -172,6 +181,11 @@ impl Engine {
 
     pub fn set_record(&self, on: bool) {
         self.shared.record.store(on, Ordering::Relaxed);
+    }
+
+    /// 今の試合を捨てて待機に戻す（止まったまま残ったとき）
+    pub fn reset_game(&self) {
+        self.shared.reset_game.store(true, Ordering::Relaxed);
     }
 
     /// 見本を読み書きする（足したり消したりしたら、次のフレームからそれで照合する）
@@ -214,7 +228,8 @@ fn write_atomic(path: &std::path::Path, text: &str) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
-fn capture_loop(s: &Shared, width: u32, game_path: &std::path::Path) {
+fn capture_loop(s: &Shared, cfg: &EngineConfig) {
+    let (width, game_path) = (cfg.width, cfg.game_path.as_path());
     let mut machine = Machine::new(Config::default());
     if let Ok(saved) = std::fs::read_to_string(game_path) {
         match machine.restore(&saved, Utc::now()) {
@@ -250,7 +265,7 @@ fn capture_loop(s: &Shared, width: u32, game_path: &std::path::Path) {
                 root: samples_dir().join("record"),
                 width,
                 quality: 85,
-                cap_bytes: 20 * 1024 * 1024 * 1024,
+                cap_bytes: cfg.record_cap_bytes,
             }) {
                 Ok(r) => {
                     s.log(format!("見本の録画を始めた: {}", r.session_dir.display()));
@@ -284,6 +299,13 @@ fn capture_loop(s: &Shared, width: u32, game_path: &std::path::Path) {
                     continue;
                 }
                 Err(e) => s.log(format!("撮れない: {:#}", e)),
+            }
+        }
+
+        if s.reset_game.swap(false, Ordering::Relaxed) {
+            match machine.drop_game() {
+                Some(id) => s.log(format!("試合 {id} を手で捨てた")),
+                None => s.log("捨てる試合は無かった".into()),
             }
         }
 

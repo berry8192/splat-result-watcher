@@ -16,7 +16,8 @@ use image::{DynamicImage, ImageFormat, RgbImage};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
-use splat_result_watcher::engine::{Engine, EngineConfig, Snapshot};
+use splat_result_watcher::engine::{Engine, Snapshot};
+use splat_result_watcher::settings::Settings;
 use splat_result_watcher::matching::{self, Glyph, Patch};
 use splat_result_watcher::nair;
 use splat_result_watcher::recognize::{GlyphRead, Score};
@@ -92,9 +93,32 @@ fn open_settings(app: AppHandle) -> Res<()> {
     Ok(())
 }
 
+/// 録画の入り切り。すぐ効き、設定にも残す
 #[tauri::command]
-fn set_record(app: State<App>, on: bool) {
+fn set_record(app: State<App>, on: bool) -> Res<()> {
     app.engine.lock().unwrap().set_record(on);
+    let (mut s, _) = Settings::load();
+    s.record = on;
+    s.save().map_err(err)
+}
+
+#[tauri::command]
+fn get_settings() -> Settings {
+    Settings::load().0
+}
+
+/// 設定を残す。番号と撮る幅は起動し直したときに効く（録画の入り切りはすぐ効く）
+#[tauri::command]
+fn save_settings(app: State<App>, settings: Settings) -> Res<()> {
+    settings.save().map_err(err)?;
+    app.engine.lock().unwrap().set_record(settings.record);
+    Ok(())
+}
+
+/// 今の試合を捨てて待機に戻す
+#[tauri::command]
+fn reset_game(app: State<App>) {
+    app.engine.lock().unwrap().reset_game();
 }
 
 #[derive(Serialize)]
@@ -330,7 +354,11 @@ fn main() {
     tauri::Builder::default()
         .setup(|app| {
             let rt = tauri::async_runtime::handle();
-            let engine = Engine::start(EngineConfig::default(), rt.inner())?;
+            let (settings, warn) = Settings::load();
+            let engine = Engine::start(settings.engine_config(), rt.inner())?;
+            if let Some(w) = warn {
+                eprintln!("{w}");
+            }
             app.manage(App { engine: Mutex::new(engine), source: Mutex::new(None) });
             Ok(())
         })
@@ -349,6 +377,9 @@ fn main() {
             status,
             frame,
             set_record,
+            get_settings,
+            save_settings,
+            reset_game,
             open_settings,
             places,
             source_from_live,

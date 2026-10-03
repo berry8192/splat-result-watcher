@@ -7,6 +7,7 @@ pub mod nair;
 pub mod recognize;
 pub mod recorder;
 pub mod server;
+pub mod settings;
 pub mod state;
 pub mod templates;
 

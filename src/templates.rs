@@ -316,6 +316,48 @@ pub fn cut(work: &RgbImage, place: &Place) -> Patch {
     matching::binary_at(work, place.roi, 0, place.min)
 }
 
+/// 足りない見本を、人が読む形で並べる
+pub fn gaps(t: &Templates) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = Vec::new();
+    for p in PLACES {
+        if seen.contains(&p.pool) {
+            continue;
+        }
+        seen.push(p.pool);
+        let have: Vec<&str> = t.get(p.pool).iter().map(|t| t.label.as_str()).collect();
+        let missing: Vec<String> = match p.kind {
+            Kind::Labels(labels) => labels
+                .iter()
+                // オープンは当面対応しない
+                .filter(|(id, _)| *id != "bankara_open")
+                .filter(|(id, _)| !have.contains(id))
+                .map(|(id, name)| if *id == "other" { format!("{name}（あると安心）") } else { name.to_string() })
+                .collect(),
+            Kind::Glyphs => {
+                let need = if p.pool == Pool::DigitSmall { "0123456789+" } else { "0123456789" };
+                need.chars()
+                    .filter(|c| glyph_label(*c).is_some_and(|l| !have.contains(&l.as_str())))
+                    .map(|c| c.to_string())
+                    .collect()
+            }
+        };
+        if !missing.is_empty() {
+            let name = match p.pool {
+                Pool::RuleIntro => "ルール紹介",
+                Pool::Outcome => "勝敗",
+                Pool::Mode => "モード",
+                Pool::Rule => "ルール（見出し）",
+                Pool::PowerLabel => "「Xパワー」の見出し",
+                Pool::Digit => "大きな数字",
+                Pool::DigitSmall => "増減の数字",
+            };
+            out.push(format!("{name}: {}", missing.join("・")));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,7 +377,10 @@ mod tests {
         assert_eq!(t2.get(Pool::Digit)[0].label, "7");
         t.remove(Pool::Digit, &a).unwrap();
         assert_eq!(Templates::load(&dir).unwrap().get(Pool::Digit).len(), 1);
-        assert!(t.add(Pool::Mode, "../x", p).is_err());
+        assert!(t.add(Pool::Mode, "../x", p.clone()).is_err());
+        let g = gaps(&t);
+        assert!(g.iter().any(|l| l.starts_with("大きな数字:") && !l.contains('7') && l.contains('8')), "{g:?}");
+        assert!(g.iter().any(|l| l.starts_with("モード:") && l.contains("その他")), "{g:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

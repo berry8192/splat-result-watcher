@@ -80,6 +80,12 @@ export default function DisplayApp() {
         </button>
       </div>
 
+      {s.template_gaps.length > 0 && (
+        <div className="gaps-note" title={s.template_gaps.join(" / ")}>
+          見本が足りない（{s.template_gaps.length} か所）。「設定・見本」で確かめる
+        </div>
+      )}
+
       {result ? (
         <div className="last-result">
           <div className={`outcome outcome-${result.outcome}`}>{OUTCOME_NAMES[result.outcome] ?? result.outcome}</div>

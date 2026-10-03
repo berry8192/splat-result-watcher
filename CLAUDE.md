@@ -12,7 +12,7 @@ WebSocket（既定 `ws://127.0.0.1:3140/events`）で流す単独アプリ。受
 ## 動かし方
 - `npm --prefix ui install`（初回だけ）→ `npm --prefix ui run build` → `cargo build --release`
   （GUI の画面 `ui/dist` を exe に埋め込むので、先に画面を組む。撮影・縮小は debug だと遅い。依存は debug でも最適化してある）
-- `target/release/splat-result-watcher-gui.exe` … GUI。起動すると撮影・照合・WebSocket が回る。「状態」と「見本の登録」
+- `target/release/splat-result-watcher-gui.exe` … GUI。起動すると撮影・照合・WebSocket が回る。小さな見せる窓と、設定・見本の窓（状態・見本の登録・設定）。設定は `%LOCALAPPDATA%\splat-result-watcher\settings.json`（serve も既定として読む）
 - `target/release/splat-result-watcher.exe shot [out.png] [--width 1920]` … 1 枚撮って時間を測る（N Air が起きていること）
 - `target/release/splat-result-watcher.exe snap <説明…> [--full]` … 1 枚撮ってゲーム穴を PNG で残す（`samples/snaps/`、説明は `index.tsv` にも）
 - `target/release/splat-result-watcher.exe record [--dir D] [--width 1280] [--cap-gb 20] [--full]` … 見本の録画（ゲーム穴だけ）。Ctrl+C で止める
