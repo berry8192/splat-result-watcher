@@ -1,5 +1,9 @@
 # スプラのリザルト認識アプリ ⇔ nicomment の約束事
 
+**この文書が正本**（2026-10-03 に nicomment から移した。約束事は出す側が持つ）。変えるときはこの文書だけを直し、
+受け手に影響する変更なら nicomment に知らせる（nicomment 側が `splatoon_link.rs` を合わせる）。
+「N Air の出力の撮り方」の節は nicomment もスプラと関係なく参照している（`nair_capture.rs`）ので、節の名前を変えるときは知らせる。
+
 版: 0（2026-09-28）。受け手は [splatoon_link.rs](../../nicomment/app/src-tauri/src/splatoon_link.rs)、
 送り方の見本は [examples/splat_detect_mock.rs](../../nicomment/app/src-tauri/examples/splat_detect_mock.rs)。
 
