@@ -11,7 +11,7 @@ use anyhow::{bail, Context, Result};
 use image::imageops::{self, FilterType};
 use image::RgbImage;
 
-use crate::matching::{self, Patch, Roi};
+use splat_result_watcher::matching::{self, Patch, Roi};
 
 /// ずらして探す幅（縮めた後の px）
 const MARGIN: u32 = 4;

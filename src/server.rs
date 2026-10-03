@@ -11,6 +11,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -36,6 +37,7 @@ struct Inner {
     log: Mutex<Log>,
     tx: broadcast::Sender<String>,
     path: PathBuf,
+    clients: AtomicUsize,
 }
 
 struct Log {
@@ -79,8 +81,14 @@ impl Server {
                 log: Mutex::new(Log { events, last_seq, stage: "idle" }),
                 tx,
                 path: path.to_path_buf(),
+                clients: AtomicUsize::new(0),
             }),
         })
+    }
+
+    /// つながっている相手の数
+    pub fn clients(&self) -> usize {
+        self.inner.clients.load(Ordering::Relaxed)
     }
 
     pub fn last_seq(&self) -> u64 {
@@ -136,7 +144,13 @@ async fn upgrade(ws: WebSocketUpgrade, Query(q): Query<After>, State(s): State<S
     ws.on_upgrade(move |socket| client(socket, s, q.after))
 }
 
-async fn client(mut socket: WebSocket, s: Server, after: u64) {
+async fn client(socket: WebSocket, s: Server, after: u64) {
+    s.inner.clients.fetch_add(1, Ordering::Relaxed);
+    talk(socket, &s, after).await;
+    s.inner.clients.fetch_sub(1, Ordering::Relaxed);
+}
+
+async fn talk(mut socket: WebSocket, s: &Server, after: u64) {
     // 購読してから再送ぶんを取り出す（間に来た出来事を落とさない）
     let mut rx = s.inner.tx.subscribe();
     let (first, sent_upto) = {

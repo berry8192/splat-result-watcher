@@ -10,18 +10,12 @@
 //!   `--width` は出力を撮る幅（撮影の時間は面積に比例し、1920 だと 20ms を超えて 1 秒ごとに落ちる）。
 //!   `--full` なら出力をまるごと残す
 //! - `splat-result-watcher serve [--addr 127.0.0.1:3140] [--width 1280] [--record]`
-//!   撮って読み、WebSocket で流す（照合はまだ映像の有無だけ）。`--record` で見本の録画も回す
+//!   撮って読み、WebSocket で流す（照合には GUI で登録した見本を使う）。`--record` で見本の録画も回す
 //! - `splat-result-watcher probe [--dir <見本>] [--width 1024]`
 //!   見本で照合を試す（2 値とグレーの一致度と時間。試しのためのもの）
 
-mod layout;
-mod matching;
-mod nair;
 mod probe;
-mod recorder;
 mod serve;
-mod server;
-mod state;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,35 +26,17 @@ use chrono::Local;
 use windows::core::BOOL;
 use windows::Win32::System::Console::SetConsoleCtrlHandler;
 
-use nair::Projector;
-use recorder::{Recorder, RecorderConfig};
-
-/// 撮る間隔。1 回の撮影が重ければ（平均 20ms 超）1 秒に落とす
-pub(crate) const INTERVAL: Duration = Duration::from_millis(500);
-const SLOW_INTERVAL: Duration = Duration::from_secs(1);
-const SLOW_CAPTURE_MS: f64 = 20.0;
-/// これより黒い絵は「映像が来ていない」として残さない
-pub(crate) const NO_SIGNAL_DARK: f64 = 0.98;
+use splat_result_watcher::nair::{self, Projector};
+use splat_result_watcher::recorder::{Recorder, RecorderConfig};
+use splat_result_watcher::{
+    layout, open_projector, samples_dir, INTERVAL, NO_SIGNAL_DARK, SLOW_CAPTURE_MS, SLOW_INTERVAL,
+};
 
 pub(crate) static STOP: AtomicBool = AtomicBool::new(false);
 
 pub(crate) unsafe extern "system" fn on_ctrl(_: u32) -> BOOL {
     STOP.store(true, Ordering::SeqCst);
     true.into()
-}
-
-/// 見本の置き場所。repo の `samples/`（git 管理外。ゲーム画面の切り抜きは同梱しない）。
-/// exe をどこから起動しても同じ所に貯まるよう、ビルドしたときの repo の場所を使う
-pub(crate) fn samples_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("samples")
-}
-
-/// 人が見ない内部のファイル（閉じ損ねたプロジェクターの控えなど）の置き場所
-pub(crate) fn data_dir() -> PathBuf {
-    let base = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("splat-result-watcher")
 }
 
 fn main() {
@@ -84,12 +60,6 @@ fn main() {
         eprintln!("エラー: {:#}", e);
         std::process::exit(1);
     }
-}
-
-pub(crate) fn open_projector(width: u32) -> Result<Projector> {
-    let dir = data_dir();
-    std::fs::create_dir_all(&dir)?;
-    Projector::open(Some(&dir.join("projector.hwnd")), width)
 }
 
 fn shot(args: &[String]) -> Result<()> {
