@@ -254,8 +254,10 @@ fn capture_loop(s: &Shared, width: u32) {
             projector = None;
         }
         if projector.is_none() && last_open_try.is_none_or(|t| t.elapsed() >= Duration::from_secs(5)) {
+            // 開くのに十数秒かかって失敗することがある。5 秒は試し終わってから数える（その間に映像なしを流す）
+            let opened = open_projector(width);
             last_open_try = Some(Instant::now());
-            match open_projector(width) {
+            match opened {
                 Ok(p) => {
                     s.log("プロジェクターを開いた".into());
                     projector = Some(p);

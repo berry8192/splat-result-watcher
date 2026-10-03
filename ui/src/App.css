@@ -1,0 +1,313 @@
+:root {
+  --bg: #16161d;
+  --panel: #20202a;
+  --line: #34343f;
+  --text: #e8e8ee;
+  --dim: #9a9aa8;
+  --accent: #e8f028;
+  --good: #5fd38d;
+  --bad: #ff6b6b;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+  font-size: 14px;
+}
+
+button,
+select,
+input {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 10px;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.4;
+}
+
+h3 {
+  margin: 16px 0 6px;
+  font-size: 14px;
+  color: var(--dim);
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  font-weight: bold;
+  margin-right: 16px;
+}
+
+.tab.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.page {
+  padding: 12px;
+}
+
+.row {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.col {
+  min-width: 0;
+}
+
+.preview,
+.source {
+  flex: 0 0 640px;
+}
+
+.preview img,
+.source img {
+  width: 100%;
+  display: block;
+  border: 1px solid var(--line);
+}
+
+.noframe {
+  width: 640px;
+  height: 360px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--line);
+  color: var(--dim);
+}
+
+.facts,
+.inspect {
+  flex: 1;
+}
+
+.stage {
+  display: inline-block;
+  font-size: 20px;
+  font-weight: bold;
+  padding: 4px 14px;
+  border-radius: 8px;
+  background: var(--panel);
+  margin-bottom: 8px;
+}
+
+.stage-in_battle {
+  color: #ff9f43;
+}
+.stage-reading,
+.stage-post_match {
+  color: var(--accent);
+}
+.stage-no_signal {
+  color: var(--dim);
+}
+
+table th {
+  text-align: left;
+  color: var(--dim);
+  font-weight: normal;
+  padding: 2px 12px 2px 0;
+  vertical-align: top;
+}
+
+.small {
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.good {
+  color: var(--good);
+}
+.bad {
+  color: var(--bad);
+}
+
+.seen {
+  margin-top: 6px;
+}
+
+.note {
+  font-size: 12px;
+  color: var(--dim);
+  font-family: Consolas, monospace;
+}
+
+.events {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.events li {
+  padding: 2px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.seq {
+  color: var(--dim);
+  font-family: Consolas, monospace;
+}
+
+.log {
+  background: var(--panel);
+  padding: 8px;
+  max-height: 220px;
+  overflow: auto;
+  font-size: 12px;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.file {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 10px;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.file input {
+  display: none;
+}
+
+.frame {
+  position: relative;
+}
+
+.roi {
+  position: absolute;
+  border: 1px solid rgba(232, 240, 40, 0.45);
+  cursor: pointer;
+}
+
+.roi.on {
+  border: 2px solid var(--accent);
+  background: rgba(232, 240, 40, 0.12);
+}
+
+.inspect select {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.cut {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.cut img {
+  max-width: 100%;
+  image-rendering: pixelated;
+  align-self: flex-start;
+  border: 1px solid var(--line);
+}
+
+.scores td {
+  font-family: Consolas, monospace;
+}
+
+.labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.labels input {
+  width: 120px;
+}
+
+.glyphs {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  margin-bottom: 6px;
+}
+
+.glyphs img {
+  image-rendering: pixelated;
+  border: 1px solid var(--line);
+}
+
+.dot {
+  font-size: 24px;
+}
+
+.pool {
+  margin-bottom: 10px;
+}
+
+.pool-name {
+  color: var(--dim);
+  margin-bottom: 4px;
+}
+
+.thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.thumb {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 12px;
+}
+
+.thumb img {
+  max-height: 40px;
+  image-rendering: pixelated;
+}
+
+.thumb .del {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  padding: 0 6px;
+  border-radius: 10px;
+  font-size: 12px;
+}

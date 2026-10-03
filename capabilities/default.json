@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "GUI の窓に既定の権限だけを与える（命令は自前の invoke だけ）",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

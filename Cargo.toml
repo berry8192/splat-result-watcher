@@ -5,6 +5,15 @@ description = "スプラトゥーン3 の配信映像からリザルトを読み
 authors = ["berry8192"]
 edition = "2021"
 publish = false
+default-run = "splat-result-watcher"
+
+[[bin]]
+name = "splat-result-watcher"
+path = "src/main.rs"
+
+[[bin]]
+name = "splat-result-watcher-gui"
+path = "src/bin/gui.rs"
 
 [dependencies]
 anyhow = "1"
@@ -13,6 +22,10 @@ serde_json = "1"
 chrono = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
 axum = { version = "0.8", features = ["ws"] }
+# GUI（src/bin/gui.rs）。画面は ui/ を Vite で組んだもの（ui/dist）を exe に埋め込む
+# （custom-protocol: `cargo tauri` を通さずに cargo だけで組んでも ui/dist を使う）
+tauri = { version = "2", features = ["custom-protocol"] }
+base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 windows = { version = "0.62", features = [
     "Win32_Foundation",
@@ -21,6 +34,9 @@ windows = { version = "0.62", features = [
     "Win32_System_Console",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
 
 [dev-dependencies]
 tokio-tungstenite = "0.28"
