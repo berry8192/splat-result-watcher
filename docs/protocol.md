@@ -56,7 +56,7 @@
 - プロジェクターは出力をもう 1 枚描き続けるので、GPU を少し食う。照合に 1920×1080 が要らないなら
   小さく開いてよい（大きさは上の 3 の手順で決める）。`PrintWindow` の時間は面積にほぼ比例する:
   1920×1080 で 25〜33ms、1280×720 で 12〜17ms、960×540 で約 16ms（このPC、release ビルド）
-- **nicomment も同じ方法で撮る予定がある**（AI に配信画面を見せる）。どちらも自分で開いた窓だけを
+- **nicomment も同じ方法で撮る**（AI に配信画面を見せる。`nair_capture.rs`）。どちらも自分で開いた窓だけを
   撮り、相手の窓は触らない。`createProjector` は `null` を返して窓を教えてくれず、タイトルも同じなので、
   **開く前と後で「全画面表示」の窓を列挙し、増えた 1 枚を自分のものとして控える**
 
@@ -93,7 +93,9 @@
 {"type":"status","state":"in_battle"}
 ```
 `state`: `no_signal`（映像が取れない）/ `idle` / `in_battle` / `reading` / `post_match`。
-nicomment は `in_battle` の間、AI に画面を見せない。
+nicomment は `in_battle` の間、AI に画面を見せない（設定 `screen_view.in_battle` で外せるが既定は見せない）。
+これとは別に放送者が対戦に入るときに手で切るスイッチ（`screen_view.enabled`）があり、認識アプリが
+つながっていない日はそちらが受ける。
 
 ### `battle_started`
 ```json
