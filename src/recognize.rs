@@ -316,7 +316,9 @@ mod with_samples {
         // 7 の見本が無いので増減は読めない
         assert_eq!(see("101625"), Seen::XPower { value: 2336.8, delta: None });
         assert_eq!(see("132222"), Seen::RuleIntro(Rule::Yagura));
-        for key in ["031924", "032333", "033416", "040905", "042113", "041735"] {
+        // メニュー・順位・精算・試合中（無効試合の札・バトル中・Finish!）・X に挑戦できる
+        let quiet = ["031924", "032333", "033416", "040905", "042113", "041735", "134014", "134030", "134042", "134056"];
+        for key in quiet {
             assert_eq!(see(key), Seen::Unknown, "{key} は何でもない");
         }
         let _ = std::fs::remove_dir_all(&dir);
