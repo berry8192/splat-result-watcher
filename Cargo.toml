@@ -19,7 +19,7 @@ path = "src/bin/gui.rs"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
 axum = { version = "0.8", features = ["ws"] }
 # GUI（src/bin/gui.rs）。画面は ui/ を Vite で組んだもの（ui/dist）を exe に埋め込む

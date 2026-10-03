@@ -16,9 +16,10 @@
 //!   勝敗はあるがモードがまだ → reading、`result` の後 → post_match
 
 use chrono::{DateTime, Duration, Local, SecondsFormat, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Rule {
     Area,
     Yagura,
@@ -37,7 +38,7 @@ impl Rule {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Mode {
     X,
     BankaraChallenge,
@@ -57,14 +58,14 @@ impl Mode {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Outcome {
     Win,
     Lose,
 }
 
 /// 個人リザルトの見出しの下の文言
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Note {
     None,
     /// 「無効試合になりました」
@@ -157,6 +158,8 @@ impl Default for Config {
 }
 
 /// 値が何フレーム続いたかを数え、落ち着いた最初と最後の値を持つ
+/// 落ちても続きから読めるよう、今の試合はファイルに控える（`Machine::save` / `Machine::restore`）。
+/// 画面ごとの読みかけ（Settle）は控えない（起動し直したら読み直す）
 #[derive(Clone, Debug)]
 struct Settle<T> {
     need: u32,
@@ -165,6 +168,12 @@ struct Settle<T> {
     absent: u32,
     first: Option<T>,
     latest: Option<T>,
+}
+
+impl<T> Default for Settle<T> {
+    fn default() -> Self {
+        Settle { need: STABLE, last: None, run: 0, absent: 0, first: None, latest: None }
+    }
 }
 
 impl<T: Clone + PartialEq> Settle<T> {
@@ -208,17 +217,21 @@ impl<T: Clone + PartialEq> Settle<T> {
 }
 
 /// 試合後の画面から読むもの。それぞれ一度だけ出す
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Post {
+    #[serde(skip)]
     xp: Settle<i64>,
     xp_delta: Option<i64>,
     xp_done: bool,
     calibrating_done: bool,
+    #[serde(skip)]
     calibrated: Settle<i64>,
     calibrated_done: bool,
+    #[serde(skip)]
     udemae: Settle<i32>,
     udemae_total: Option<i32>,
     udemae_done: bool,
+    #[serde(skip)]
     progress: Settle<(u8, u8)>,
     progress_done: bool,
 }
@@ -242,7 +255,7 @@ impl Post {
 }
 
 /// 今の試合と、読めた事実
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Game {
     id: String,
     started_at: DateTime<Utc>,
@@ -319,6 +332,31 @@ impl Machine {
             episode_fresh: false,
             serial: 0,
         }
+    }
+
+    /// 控えるもの（今の試合と通し番号）。試合が無ければ `null` の試合を控える
+    pub fn save(&self) -> String {
+        json!({"serial": self.serial, "game": self.game}).to_string()
+    }
+
+    /// 控えから読み戻す。時間切れの決まりに当てはまる古い試合は捨てる。読み戻した試合の ID を返す
+    pub fn restore(&mut self, saved: &str, now: DateTime<Utc>) -> Option<String> {
+        let v: Value = serde_json::from_str(saved).ok()?;
+        if let Some(n) = v["serial"].as_u64() {
+            self.serial = n as u32;
+        }
+        let g: Game = serde_json::from_value(v["game"].clone()).ok()?;
+        let stale = match (g.has_end(), g.settled) {
+            (false, _) => now - g.started_at > Duration::seconds(BATTLE_TIMEOUT),
+            (true, false) => now - g.ended_at.unwrap_or(g.last_fact) > Duration::seconds(READ_TIMEOUT),
+            (true, true) => now - g.last_fact > Duration::seconds(POST_TIMEOUT),
+        };
+        if stale {
+            return None;
+        }
+        let id = g.id.clone();
+        self.game = Some(g);
+        Some(id)
     }
 
     pub fn stage(&self) -> Stage {
@@ -898,6 +936,32 @@ mod tests {
         r.feed(header(Mode::X, Rule::Area, Note::None), 10);
         assert!(r.events.is_empty());
         assert_eq!(r.m.stage(), Stage::Idle);
+    }
+
+    #[test]
+    fn restart_in_the_middle_continues_the_match() {
+        let mut r = Run::new();
+        r.intro(Rule::Hoko).feed(win(), 6).wait(5);
+        let saved = r.m.save();
+        // 落ちて起動し直した（20 秒後）
+        let mut m = Machine::new(Config::default());
+        let at = r.at() + Duration::seconds(20);
+        assert!(m.restore(&saved, at).is_some());
+        assert_eq!(m.stage(), Stage::Reading);
+        let mut r2 = Run { m, i: r.i + 40, events: Vec::new() };
+        r2.feed(header(Mode::X, Rule::Hoko, Note::None), 5);
+        let res: Vec<Value> = r2.of("result").into_iter().cloned().collect();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0]["match_id"], r.of("battle_started")[0]["match_id"]);
+        assert_eq!(res[0]["rule"], "hoko");
+        // 次の試合の ID は重ならない
+        r2.intro(Rule::Area);
+        assert_ne!(r2.of("battle_started")[0]["match_id"], res[0]["match_id"]);
+
+        // 古すぎる控えは捨てる
+        let mut m = Machine::new(Config::default());
+        assert!(m.restore(&saved, at + Duration::seconds(READ_TIMEOUT + 60)).is_none());
+        assert_eq!(m.stage(), Stage::Idle);
     }
 
     #[test]

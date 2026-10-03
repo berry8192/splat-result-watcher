@@ -38,6 +38,8 @@ pub struct EngineConfig {
     pub record: bool,
     pub events_path: PathBuf,
     pub templates_dir: PathBuf,
+    /// 今の試合の控え（落ちても、リザルトまでに起動し直せば続きから読む）
+    pub game_path: PathBuf,
 }
 
 impl Default for EngineConfig {
@@ -48,6 +50,7 @@ impl Default for EngineConfig {
             record: false,
             events_path: data_dir().join("events.jsonl"),
             templates_dir: Templates::default_dir(),
+            game_path: data_dir().join("current_game.json"),
         }
     }
 }
@@ -148,7 +151,7 @@ impl Engine {
         let s = shared.clone();
         let thread = std::thread::Builder::new()
             .name("capture".into())
-            .spawn(move || capture_loop(&s, cfg.width))?;
+            .spawn(move || capture_loop(&s, cfg.width, &cfg.game_path))?;
         Ok(Engine { shared, thread: Some(thread), printed: 0 })
     }
 
@@ -204,8 +207,23 @@ impl Drop for Engine {
     }
 }
 
-fn capture_loop(s: &Shared, width: u32) {
+/// 書きかけで落ちても壊れないよう、別の名前に書いてから差し替える
+fn write_atomic(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, path)
+}
+
+fn capture_loop(s: &Shared, width: u32, game_path: &std::path::Path) {
     let mut machine = Machine::new(Config::default());
+    if let Ok(saved) = std::fs::read_to_string(game_path) {
+        match machine.restore(&saved, Utc::now()) {
+            Some(id) => s.log(format!("途中の試合 {id} の続きから読む")),
+            None if !saved.contains("\"game\":null") => s.log("控えの試合は古いので捨てた".into()),
+            None => {}
+        }
+    }
+    let mut last_saved = machine.save();
     let mut projector: Option<Projector> = None;
     let mut recorder: Option<Recorder> = None;
     let mut last_open_try: Option<Instant> = None;
@@ -304,6 +322,13 @@ fn capture_loop(s: &Shared, width: u32) {
                 }
                 Err(e) => s.log(format!("出来事を控えられない: {:#}", e)),
             }
+        }
+        let saved = machine.save();
+        if saved != last_saved {
+            if let Err(e) = write_atomic(game_path, &saved) {
+                s.log(format!("今の試合を控えられない: {e}"));
+            }
+            last_saved = saved;
         }
         let st = machine.stage().as_str();
         if st != stage {
