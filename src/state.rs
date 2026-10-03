@@ -1062,6 +1062,29 @@ mod tests {
     }
 
     #[test]
+    fn result_comes_before_power_of_the_same_match() {
+        // nicomment は power でセットを締めるので、同じ試合の result は必ず先（nicomment からのお願い 2026-10-03）
+        let order = |r: &Run| -> Vec<String> {
+            r.events.iter().filter(|e| e["type"] == "result" || e["type"] == "power").map(|e| e["type"].as_str().unwrap().to_string()).collect()
+        };
+        // (a) セットを決めた LOSE の見出しを見落とし、X パワーの画面を読んだ（マッチングで X と分かっている）
+        let mut r = Run::new();
+        r.feed(Seen::Matching(Mode::X), 10).intro(Rule::Area).feed(Seen::Outcome(Outcome::Lose), 6).wait(20);
+        r.feed(xp(2100.0, Some(-30.0)), 4).feed(xp(2070.0, Some(-30.0)), 4);
+        assert_eq!(order(&r), ["result", "power"]);
+        assert_eq!(r.of("result")[0]["outcome"], "lose");
+        // (b) 見出しが読めず、X パワーの画面でモードを補う
+        let mut r = Run::new();
+        r.intro(Rule::Area).feed(win(), 6).wait(20).feed(xp(2100.0, Some(94.6)), 4).feed(xp(2194.6, Some(94.6)), 4);
+        assert_eq!(order(&r), ["result", "power"]);
+        // (c) バンカラの精算でモードを補う
+        let mut r = Run::new();
+        let ud = |v, t| Seen::Udemae { value: v, total: t };
+        r.intro(Rule::Asari).feed(Seen::Outcome(Outcome::Lose), 6).wait(20).feed(ud(-15, Some(380)), 4).feed(ud(365, Some(380)), 4);
+        assert_eq!(order(&r), ["result", "power"]);
+    }
+
+    #[test]
     fn promotion_resets_udemae() {
         let mut r = Run::new();
         r.intro(Rule::Asari).feed(win(), 6).wait(5).feed(header(Mode::BankaraChallenge, Rule::Asari, Note::None), 4);
