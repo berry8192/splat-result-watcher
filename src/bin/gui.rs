@@ -349,7 +349,43 @@ fn delete_template(app: State<App>, pool: String, id: String) -> Res<()> {
     app.engine.lock().unwrap().with_recognizer(|r| r.templates_mut().remove(pool, &id)).map_err(err)
 }
 
+/// 起動は 1 つだけにする。すでに動いていれば、その見せる窓を前に出して `false`。
+/// 前の GUI が後始末の途中（窓はもう無い）なら、終わるまで最大 30 秒待つ。
+/// （2 つ動くと、後の方は 3140 番を取れず、撮影も取り合いになった。2026-10-04）
+fn single_instance() -> bool {
+    use windows::core::w;
+    use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
+    use windows::Win32::System::Threading::CreateMutexW;
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE};
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        // 持ったまま終わるまで離さない（プロセスが終われば Windows が片付ける）
+        let Ok(h) = (unsafe { CreateMutexW(None, false, w!("Local\\splat-result-watcher-gui")) }) else {
+            return true;
+        };
+        if unsafe { GetLastError() } != ERROR_ALREADY_EXISTS {
+            return true;
+        }
+        let _ = unsafe { CloseHandle(h) };
+        if let Ok(win) = unsafe { FindWindowW(w!("Tauri Window"), w!("splat-result-watcher")) } {
+            unsafe {
+                let _ = ShowWindow(win, SW_RESTORE);
+                let _ = SetForegroundWindow(win);
+            }
+            return false;
+        }
+        if std::time::Instant::now() >= deadline {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
 fn main() {
+    if !single_instance() {
+        return;
+    }
     nair::init_dpi();
     tauri::Builder::default()
         .setup(|app| {
@@ -363,13 +399,20 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // 見せる窓を閉じたら、設定の窓も閉じて終わる（プロジェクターを閉じてから）
+            // 見せる窓を閉じたら、設定の窓もすぐ消して終わる。プロジェクターを閉じるなどの後始末は
+            // 裏のスレッドで済ませる（ここで待つと窓が固まり、閉じられないように見えた。2026-10-04）
             if window.label() == "main" {
                 if let tauri::WindowEvent::Destroyed = event {
-                    if let Some(app) = window.try_state::<App>() {
-                        app.engine.lock().unwrap().stop();
+                    let h = window.app_handle().clone();
+                    if let Some(w) = h.get_webview_window("settings") {
+                        let _ = w.destroy();
                     }
-                    window.app_handle().exit(0);
+                    std::thread::spawn(move || {
+                        if let Some(app) = h.try_state::<App>() {
+                            app.engine.lock().unwrap().stop();
+                        }
+                        h.exit(0);
+                    });
                 }
             }
         })

@@ -3,7 +3,8 @@
 //! 撮影は普通のスレッドで 0.5 秒ごと（重ければ 1 秒）。サーバは渡された tokio の上で動かす。
 //! GUI に見せるもの（段階・撮影の時間・最新の絵・途中経過・出来事）は [`Engine::snapshot`] で取る。
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
+use std::io::Write as _;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -99,9 +100,20 @@ struct Shared {
     server: Server,
 }
 
+/// 記録の行をファイルにも残す（`%LOCALAPPDATA%\\splat-result-watcher\\logs\\日付.log`。終わった後で見返す）
+fn append_log_file(line: &str) {
+    let dir = data_dir().join("logs");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join(format!("{}.log", Local::now().format("%Y%m%d")));
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 impl Shared {
     fn log(&self, line: String) {
         let line = format!("{}  {}", Local::now().format("%H:%M:%S"), line);
+        append_log_file(&line);
         let mut log = self.log.lock().unwrap();
         log.push_front(line);
         log.truncate(KEEP_LOG);
@@ -245,6 +257,8 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
     let mut interval = INTERVAL;
     let mut next = Instant::now();
     let mut stage = "";
+    // 段階ごとの、場所ごとの一番高い一致度（段階が変わるたびに記録へ書いて空にする）
+    let mut peaks: BTreeMap<String, (String, f64)> = BTreeMap::new();
     let (mut times, mut since) = (Vec::new(), Instant::now());
 
     while !s.stop.load(Ordering::SeqCst) {
@@ -326,12 +340,18 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
             Some(Err(e)) => {
                 s.log(format!("撮影に失敗: {:#}。開き直す", e));
                 projector = None;
-                crate::recognize::Reading { seen: Seen::NoSignal, notes: Vec::new() }
+                crate::recognize::Reading { seen: Seen::NoSignal, notes: Vec::new(), peaks: Vec::new() }
             }
-            None => crate::recognize::Reading { seen: Seen::NoSignal, notes: Vec::new() },
+            None => crate::recognize::Reading { seen: Seen::NoSignal, notes: Vec::new(), peaks: Vec::new() },
         };
 
         let seen_text = format!("{:?}", reading.seen);
+        for (place, label, score) in &reading.peaks {
+            let e = peaks.entry(place.clone()).or_insert_with(|| (label.clone(), *score));
+            if *score > e.1 {
+                *e = (label.clone(), *score);
+            }
+        }
         for ev in machine.feed(Utc::now(), reading.seen) {
             match s.server.publish(ev.clone()) {
                 Ok(seq) => {
@@ -354,6 +374,11 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
         }
         let st = machine.stage().as_str();
         if st != stage {
+            if !peaks.is_empty() {
+                let list: Vec<String> = peaks.iter().map(|(p, (l, v))| format!("{p} {l} {v:.2}")).collect();
+                s.log(format!("{} の間の一番高い一致度: {}", if stage.is_empty() { "起動" } else { stage }, list.join(" / ")));
+                peaks.clear();
+            }
             s.log(format!("段階: {st}"));
             stage = st;
             s.server.set_stage(st);

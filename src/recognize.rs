@@ -47,11 +47,13 @@ pub struct GlyphRead {
     pub chars: Vec<(char, f64)>,
 }
 
-/// 1 フレームを読んだ結果。`notes` は GUI に見せる途中経過
+/// 1 フレームを読んだ結果。`notes` は GUI に見せる途中経過、`peaks` は記録に残す一致度
+/// （場所の短い名前, 一番近いラベルか読んだ数字, 一致度。数字は 1 文字ずつの一致度の一番低いもの）
 #[derive(Clone, Debug)]
 pub struct Reading {
     pub seen: Seen,
     pub notes: Vec<String>,
+    pub peaks: Vec<(String, String, f64)>,
 }
 
 pub struct Recognizer {
@@ -61,6 +63,21 @@ pub struct Recognizer {
 /// 一番よいものと 2 番目
 fn top2(scores: &[Score]) -> (Option<&Score>, f64) {
     (scores.first(), scores.get(1).map_or(0.0, |s| s.score))
+}
+
+/// 途中経過を貯める
+#[derive(Default)]
+struct Notes {
+    text: Vec<String>,
+    peaks: Vec<(String, String, f64)>,
+}
+
+impl Notes {
+    fn number(&mut self, short: &str, r: &GlyphRead) {
+        self.text.push(format!("{short}: {}", r.note()));
+        let low = r.chars.iter().map(|c| c.1).fold(1.0, f64::min);
+        self.peaks.push((short.to_string(), r.text.clone(), if r.chars.is_empty() { 0.0 } else { low }));
+    }
 }
 
 impl GlyphRead {
@@ -104,11 +121,12 @@ impl Recognizer {
     }
 
     /// しきい値と差で 1 つに決める
-    fn decide(&self, work: &RgbImage, place: &Place, min: f64, notes: &mut Vec<String>) -> Option<String> {
+    fn decide(&self, work: &RgbImage, place: &Place, min: f64, notes: &mut Notes) -> Option<String> {
         let scores = self.scores(work, place);
         let (first, second) = top2(&scores);
         let first = first?;
-        notes.push(format!("{}: {} 一致度 {:.2}（2 番目 {:.2}）", place.short, first.label, first.score, second));
+        notes.text.push(format!("{}: {} 一致度 {:.2}（2 番目 {:.2}）", place.short, first.label, first.score, second));
+        notes.peaks.push((place.short.to_string(), first.label.clone(), first.score));
         (first.score >= min && first.score - second >= MARGIN).then(|| first.label.clone())
     }
 
@@ -160,16 +178,16 @@ impl Recognizer {
 
     /// 1 フレームを読む。`game` はゲーム穴（大きさは問わない）
     pub fn recognize(&self, game: &RgbImage) -> Reading {
-        let mut notes = Vec::new();
+        let mut notes = Notes::default();
         if nair::dark_ratio(game) > NO_SIGNAL_DARK {
-            return Reading { seen: Seen::NoSignal, notes };
+            return Reading { seen: Seen::NoSignal, notes: Vec::new(), peaks: Vec::new() };
         }
         let work = templates::to_work(game);
         let seen = self.recognize_work(&work, &mut notes);
-        Reading { seen, notes }
+        Reading { seen, notes: notes.text, peaks: notes.peaks }
     }
 
-    fn recognize_work(&self, work: &RgbImage, notes: &mut Vec<String>) -> Seen {
+    fn recognize_work(&self, work: &RgbImage, notes: &mut Notes) -> Seen {
         let p = |id| place(id).expect("場所の名前");
         let rule = |l: String| match l.as_str() {
             "area" => Some(Rule::Area),
@@ -211,16 +229,16 @@ impl Recognizer {
         if let Some(l) = self.decide(work, p("udemae_title"), UDEMAE_TITLE_MIN, notes) {
             if l == "promoted" {
                 let n = self.read_glyphs(work, p("udemae_reset"));
-                notes.push(format!("リセット: {}", n.note()));
+                notes.number("リセット", &n);
                 if let Some(v) = parse_points(&n.text) {
                     return Seen::UdemaeReset(v);
                 }
             } else {
                 let n = self.read_glyphs(work, p("udemae_value"));
-                notes.push(format!("ウデマエ: {}", n.note()));
+                notes.number("ウデマエ", &n);
                 if let Some(value) = parse_points(&n.text) {
                     let t = self.read_glyphs(work, p("udemae_total"));
-                    notes.push(format!("TOTAL: {}", t.note()));
+                    notes.number("TOTAL", &t);
                     return Seen::Udemae { value, total: parse_points(&t.text) };
                 }
             }
@@ -228,13 +246,14 @@ impl Recognizer {
 
         let label = self.scores(work, p("power_label"));
         if let Some(s) = label.first() {
-            notes.push(format!("「Xパワー」: 一致度 {:.2}", s.score));
+            notes.text.push(format!("「Xパワー」: 一致度 {:.2}", s.score));
+            notes.peaks.push(("「Xパワー」".into(), s.label.clone(), s.score));
             if s.score >= POWER_LABEL_MIN {
                 let n = self.read_glyphs(work, p("power_number"));
-                notes.push(format!("Xパワー: {}", n.note()));
+                notes.number("Xパワー", &n);
                 if let Some(value) = parse_power(&n.text) {
                     let d = self.read_glyphs(work, p("power_delta"));
-                    notes.push(format!("増減: {}", d.note()));
+                    notes.number("増減", &d);
                     return Seen::XPower { value, delta: parse_delta(&d.text) };
                 }
             }
