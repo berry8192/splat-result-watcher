@@ -75,6 +75,13 @@ pub enum Note {
     Uncounted,
 }
 
+/// メニュー・マッチング中・参加費の画面で見えた自分の値（`observed`）
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Observed {
+    X { rule: Option<Rule>, value: f64 },
+    Udemae { value: i32 },
+}
+
 /// 1 フレームで見えたもの。照合が決める
 #[derive(Clone, Debug, PartialEq)]
 pub enum Seen {
@@ -102,6 +109,8 @@ pub enum Seen {
     Udemae { value: i32, total: Option<i32> },
     /// 昇格の画面「300p ウデマエポイントはリセットされます」
     UdemaeReset(i32),
+    /// 試合と結び付かない、今見えた自分の値（`wins` / `losses` は進行が見えたときだけ）
+    Observed { what: Observed, wins: Option<u8>, losses: Option<u8> },
     /// 進行の「WIN LOSE n - m」。`stamps` は WIN の判子の数（読めたときだけ）
     Progress { wins: u8, losses: u8, stamps: Option<u8> },
 }
@@ -320,12 +329,18 @@ pub struct Machine {
     matching: Settle<Mode>,
     /// マッチング中の画面で分かったモードと、最後にその画面を見た時刻
     pending_mode: Option<(Mode, DateTime<Utc>)>,
+    /// 今見えた自分の値（比べやすいよう 0.1 刻みの整数にしたもの）と、最後に出したもの
+    observed: Settle<ObservedKey>,
+    observed_sent: Option<ObservedKey>,
     /// 勝敗の画面が映っている一続き（始まり, 最後に見た時刻）と、それが久しぶりに映ったものか
     episode: Option<(DateTime<Utc>, DateTime<Utc>)>,
     episode_fresh: bool,
     /// 試合 ID の通し番号（同じ分に 2 試合あっても重ならないように）
     serial: u32,
 }
+
+/// `observed` を比べる形: (x か, ルール, 値の 10 倍, 勝ち, 負け)
+type ObservedKey = (bool, Option<Rule>, i64, Option<u8>, Option<u8>);
 
 /// パワーは 0.1 刻みなので 10 倍の整数で比べる
 fn tenths(v: f64) -> i64 {
@@ -350,6 +365,8 @@ impl Machine {
             header: Settle::new(STABLE),
             matching: Settle::new(STABLE),
             pending_mode: None,
+            observed: Settle::new(STABLE),
+            observed_sent: None,
             episode: None,
             episode_fresh: false,
             serial: 0,
@@ -433,6 +450,30 @@ impl Machine {
             if *pm == m {
                 *t = at;
             }
+        }
+
+        // 今見えた自分の値: 落ち着いて、前に出したものと違えば出す。試合中は出さない
+        let ob = match &seen {
+            Seen::Observed { what, wins, losses } => Some(match what {
+                Observed::X { rule, value } => (true, *rule, tenths(*value), *wins, *losses),
+                Observed::Udemae { value } => (false, None, *value as i64 * 10, *wins, *losses),
+            }),
+            _ => None,
+        };
+        let in_battle = self.game.as_ref().is_some_and(|g| !g.has_end());
+        if self.observed.push(ob) && !in_battle && self.observed.latest != self.observed_sent {
+            let (x, rule, v, wins, losses) = self.observed.latest.unwrap();
+            let mut ev = json!({"type": "observed", "kind": if x { "x" } else { "udemae" }, "at": time(at)});
+            ev["value"] = if x { json!(v as f64 / 10.0) } else { json!(v / 10) };
+            if let Some(r) = rule {
+                ev["rule"] = r.as_str().into();
+            }
+            if let (Some(w), Some(l)) = (wins, losses) {
+                ev["wins"] = w.into();
+                ev["losses"] = l.into();
+            }
+            out.push(ev);
+            self.observed_sent = self.observed.latest;
         }
 
         // ルール紹介: 新しい試合（ちらついて 2 回落ち着いたものは同じ試合）
@@ -1082,6 +1123,34 @@ mod tests {
         let ud = |v, t| Seen::Udemae { value: v, total: t };
         r.intro(Rule::Asari).feed(Seen::Outcome(Outcome::Lose), 6).wait(20).feed(ud(-15, Some(380)), 4).feed(ud(365, Some(380)), 4);
         assert_eq!(order(&r), ["result", "power"]);
+    }
+
+    #[test]
+    fn observed_values_are_sent_once_when_they_change() {
+        let ox = |v: f64, w: Option<u8>, l: Option<u8>| Seen::Observed {
+            what: Observed::X { rule: Some(Rule::Hoko), value: v },
+            wins: w,
+            losses: l,
+        };
+        let mut r = Run::new();
+        // メニューを開いている間ずっと同じ値 → 1 回だけ
+        r.feed(ox(1983.5, Some(1), Some(0)), 20).wait(5).feed(ox(1983.5, Some(1), Some(0)), 10);
+        let o = r.of("observed");
+        assert_eq!(o.len(), 1);
+        assert_eq!((o[0]["kind"].as_str(), o[0]["rule"].as_str(), o[0]["value"].as_f64()), (Some("x"), Some("hoko"), Some(1983.5)));
+        assert_eq!((o[0]["wins"].as_u64(), o[0]["losses"].as_u64()), (Some(1), Some(0)));
+        assert!(o[0].get("match_id").is_none());
+        // 進行が変わったら出す。ウデマエ（参加費の前の値）は整数
+        r.feed(ox(1983.5, Some(2), Some(0)), 4);
+        r.feed(Seen::Observed { what: Observed::Udemae { value: -40 }, wins: None, losses: None }, 4);
+        let o = r.of("observed");
+        assert_eq!(o.len(), 3);
+        assert_eq!((o[2]["kind"].as_str(), o[2]["value"].as_i64()), (Some("udemae"), Some(-40)));
+
+        // 試合中は出さない
+        let mut r = Run::new();
+        r.intro(Rule::Area).feed(ox(2000.0, None, None), 6);
+        assert!(r.of("observed").is_empty());
     }
 
     #[test]

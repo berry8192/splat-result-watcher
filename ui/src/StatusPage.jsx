@@ -21,6 +21,8 @@ function describe(ev) {
       return `${ev.kind} ${ev.before ?? "?"} → ${ev.after}`;
     case "set_progress":
       return `進行 ${ev.wins}-${ev.losses}`;
+    case "observed":
+      return `見えた値 ${ev.kind} ${ev.value}${ev.wins != null ? `（${ev.wins}-${ev.losses}）` : ""}`;
     default:
       return ev.type;
   }
