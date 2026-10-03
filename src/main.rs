@@ -11,10 +11,13 @@
 //!   `--full` なら出力をまるごと残す
 //! - `splat-result-watcher serve [--addr 127.0.0.1:3140] [--width 1280] [--record]`
 //!   撮って読み、WebSocket で流す（照合には GUI で登録した見本を使う）。`--record` で見本の録画も回す
+//! - `splat-result-watcher seed-templates [--force]`
+//!   手元の見本（samples/snaps）から決まった組の見本をまとめて登録する
 //! - `splat-result-watcher probe [--dir <見本>] [--width 1024]`
 //!   見本で照合を試す（2 値とグレーの一致度と時間。試しのためのもの）
 
 mod probe;
+mod seed;
 mod serve;
 
 use std::path::PathBuf;
@@ -46,12 +49,14 @@ fn main() {
         Some("snap") => snap(&args[1..]),
         Some("record") => record(&args[1..]),
         Some("serve") => serve::run(&args[1..]),
+        Some("seed-templates") => seed::run(&args[1..], &samples_dir()),
         Some("probe") => probe::run(&args[1..], &samples_dir()),
         _ => {
             eprintln!("使い方: splat-result-watcher shot [出力.png] [--width 1920]");
             eprintln!("        splat-result-watcher snap <説明…> [--full] [--width 1920] [--dir <置き場所>]");
             eprintln!("        splat-result-watcher record [--dir <置き場所>] [--width 1280] [--quality 85] [--cap-gb 20] [--full]");
             eprintln!("        splat-result-watcher serve [--addr 127.0.0.1:3140] [--width 1280] [--record]");
+            eprintln!("        splat-result-watcher seed-templates [--force]");
             eprintln!("        splat-result-watcher probe [--dir <見本>] [--width 1024]");
             std::process::exit(2);
         }
