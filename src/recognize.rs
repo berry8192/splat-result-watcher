@@ -243,16 +243,21 @@ impl Recognizer {
     }
 }
 
-/// 「2194.6」: 整数 3〜4 桁と小数 1 桁
+/// X パワーの下限（これより下がらない。2026-10 に調べた仕様）。下回る読みは読み違い
+pub const X_POWER_MIN: f64 = 500.0;
+
+/// 「2194.6」: 整数 3〜4 桁と小数 1 桁で、500 以上
 pub fn parse_power(s: &str) -> Option<f64> {
     let (i, f) = s.split_once('.')?;
     let ok = (3..=4).contains(&i.len())
         && f.len() == 1
         && i.bytes().chain(f.bytes()).all(|b| b.is_ascii_digit());
-    ok.then(|| s.parse().ok()).flatten()
+    let v: f64 = if ok { s.parse().ok()? } else { return None };
+    (v >= X_POWER_MIN).then_some(v)
 }
 
-/// ウデマエポイント「130」「-15」「1051」（p は切り出しで捨ててある）
+/// ウデマエポイント「130」「-15」「1051」（p は切り出しで捨ててある）。
+/// 仕様の範囲は −9999〜9999 なので、4 桁までに限ることがそのまま範囲の確かめになる
 pub fn parse_points(s: &str) -> Option<i32> {
     let digits = s.strip_prefix('-').unwrap_or(s);
     let ok = (1..=4).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit());
@@ -284,6 +289,8 @@ mod tests {
         assert_eq!(parse_power("21946"), None);
         assert_eq!(parse_power("2?94.6"), None);
         assert_eq!(parse_power("2194.62"), None);
+        assert_eq!(parse_power("499.9"), None, "X パワーは 500 より下がらない");
+        assert_eq!(parse_power("500.0"), Some(500.0));
         assert_eq!(parse_delta("+94.6"), Some(94.6));
         assert_eq!(parse_delta("-117.0"), Some(-117.0));
         assert_eq!(parse_delta("+622"), None);
@@ -292,6 +299,8 @@ mod tests {
         assert_eq!(parse_points("1051"), Some(1051));
         assert_eq!(parse_points("3?0"), None);
         assert_eq!(parse_points("-"), None);
+        assert_eq!(parse_points("-9999"), Some(-9999));
+        assert_eq!(parse_points("10000"), None, "ウデマエポイントは 9999 まで");
     }
 }
 
