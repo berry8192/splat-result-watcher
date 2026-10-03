@@ -142,13 +142,24 @@ pub fn ncc(t: &Patch, s: &Patch) -> f64 {
 /// 数字の見本をそろえる大きさ（縦横の比は保ち、高さを合わせて横は真ん中に置く）
 const GLYPH_H: u32 = 30;
 const GLYPH_W: u32 = 30;
-/// 行の高さに対してこれより低い文字は小数点とみなす
+/// 行の高さに対してこれより低いかたまりは、小数点かマイナス（形で決まるので見本は要らない）
 const DOT_MAX_H: f64 = 0.4;
+/// 低いかたまりのうち、幅が高さのこれ倍以上ならマイナス（横棒）、それ以外は小数点
+const MINUS_MIN_RATIO: f64 = 1.8;
+
+/// 数字の 1 文字ぶん
+#[derive(Clone, Debug)]
+pub enum Glyph {
+    Dot,
+    Minus,
+    /// 大きさをそろえた字（見本と比べる）
+    Shape(Patch),
+}
 /// 白がこれより少ない列のかたまりはごみとして捨てる（行の高さに対する割合）
 const NOISE_PX: f64 = 0.15;
 
-/// 2 値の ROI を白い列のかたまりで 1 文字ずつに切る。小数点は `None`、それ以外は大きさをそろえた文字
-pub fn glyphs(p: &Patch) -> Vec<Option<Patch>> {
+/// 2 値の ROI を白い列のかたまりで 1 文字ずつに切る
+pub fn glyphs(p: &Patch) -> Vec<Glyph> {
     let col_white = |x: u32| (0..p.h).any(|y| p.px[(y * p.w + x) as usize] != 0);
     let mut runs = Vec::new();
     let mut start = None;
@@ -185,7 +196,7 @@ pub fn glyphs(p: &Patch) -> Vec<Option<Patch>> {
         .map(|(x0, x1, y0, y1, _)| {
             let (w, h) = (x1 - x0, y1 - y0);
             if (h as f64) < DOT_MAX_H * line_h as f64 {
-                return None;
+                return if w as f64 >= MINUS_MIN_RATIO * h as f64 { Glyph::Minus } else { Glyph::Dot };
             }
             // 高さを GLYPH_H に合わせ、横は比を保って真ん中に置く（最近傍）
             let sw = ((w as f64 * GLYPH_H as f64 / h as f64).round() as u32).clamp(1, GLYPH_W);
@@ -198,7 +209,7 @@ pub fn glyphs(p: &Patch) -> Vec<Option<Patch>> {
                     px[(gy * GLYPH_W + off + gx) as usize] = p.px[(sy * p.w + sx) as usize];
                 }
             }
-            Some(Patch { w: GLYPH_W, h: GLYPH_H, px })
+            Glyph::Shape(Patch { w: GLYPH_W, h: GLYPH_H, px })
         })
         .collect()
 }
@@ -214,5 +225,37 @@ pub fn glyph_iou(a: &Patch, b: &Patch) -> f64 {
         0.0
     } else {
         and as f64 / or as f64
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 文字の形を描いた 2 値（`#` が白）
+    fn draw(rows: &[&str]) -> Patch {
+        let w = rows[0].len() as u32;
+        let px = rows.iter().flat_map(|r| r.bytes().map(|b| (b == b'#') as u8)).collect();
+        Patch { w, h: rows.len() as u32, px }
+    }
+
+    #[test]
+    fn dot_and_minus_are_told_by_shape() {
+        // 「-1.5」: 横棒・縦棒・点・縦棒
+        let p = draw(&[
+            "......#....##",
+            "......#....#.",
+            "#####.#....##",
+            "#####.#.....#",
+            "......#....##",
+            "......#.##...",
+            "......#.##...",
+        ]);
+        let g = glyphs(&p);
+        assert_eq!(g.len(), 4);
+        assert!(matches!(g[0], Glyph::Minus));
+        assert!(matches!(g[1], Glyph::Shape(_)));
+        assert!(matches!(g[2], Glyph::Dot));
+        assert!(matches!(g[3], Glyph::Shape(_)));
     }
 }

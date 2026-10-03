@@ -175,7 +175,7 @@ export default function TemplatesPage() {
                 <>
                   <div className="glyphs">
                     {view.glyphs.map((g, i) =>
-                      g ? <img key={i} src={g} alt="" /> : <span key={i} className="dot">.</span>
+                      g.image ? <img key={i} src={g.image} alt="" /> : <span key={i} className="dot">{g.mark}</span>
                     )}
                   </div>
                   {view.reading && (

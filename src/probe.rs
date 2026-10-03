@@ -268,7 +268,7 @@ fn digits(images: &[(String, RgbImage)]) -> Result<()> {
                 continue;
             }
             for (c, p) in t.chars().zip(g) {
-                if let Some(p) = p {
+                if let matching::Glyph::Shape(p) = p {
                     tmpl.push((c, p));
                 }
             }
@@ -277,9 +277,16 @@ fn digits(images: &[(String, RgbImage)]) -> Result<()> {
         let mut read = String::new();
         let mut detail = Vec::new();
         for g in gs {
-            let Some(g) = g else {
-                read.push('.');
-                continue;
+            let g = match g {
+                matching::Glyph::Dot => {
+                    read.push('.');
+                    continue;
+                }
+                matching::Glyph::Minus => {
+                    read.push('-');
+                    continue;
+                }
+                matching::Glyph::Shape(g) => g,
             };
             // 文字ごとの一番よい一致度。1 位と 2 位を残す
             let mut best: Vec<(char, f64)> = Vec::new();

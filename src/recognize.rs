@@ -10,7 +10,7 @@
 use image::RgbImage;
 use serde::Serialize;
 
-use crate::matching::{self, Patch};
+use crate::matching::{self, Glyph};
 use crate::nair;
 use crate::state::{Mode, Note, Outcome, Rule, Seen};
 use crate::templates::{self, glyph_char, place, Place, Templates};
@@ -41,7 +41,7 @@ pub struct Score {
 pub struct GlyphRead {
     /// 読めた文字列。見本の無い字・一致度の足りない字は `?`
     pub text: String,
-    /// 1 文字ずつ: (読んだ字, 一致度)。小数点は (`.`, 1.0)
+    /// 1 文字ずつ: (読んだ字, 一致度)。小数点とマイナスは形で決まるので (`.` / `-`, 1.0)
     pub chars: Vec<(char, f64)>,
 }
 
@@ -102,8 +102,8 @@ impl Recognizer {
         (first.score >= min && first.score - second >= MARGIN).then(|| first.label.clone())
     }
 
-    /// 切り出した 1 文字ずつの絵（GUI で見せる・登録する）
-    pub fn glyphs(&self, work: &RgbImage, place: &Place) -> Vec<Option<Patch>> {
+    /// 切り出した 1 文字ずつ（GUI で見せる・登録する）
+    pub fn glyphs(&self, work: &RgbImage, place: &Place) -> Vec<Glyph> {
         matching::glyphs(&templates::cut(work, place))
     }
 
@@ -113,10 +113,14 @@ impl Recognizer {
         let mut text = String::new();
         let mut chars = Vec::new();
         for g in self.glyphs(work, place) {
-            let Some(g) = g else {
-                text.push('.');
-                chars.push(('.', 1.0));
-                continue;
+            let g = match g {
+                Glyph::Dot | Glyph::Minus => {
+                    let c = if matches!(g, Glyph::Dot) { '.' } else { '-' };
+                    text.push(c);
+                    chars.push((c, 1.0));
+                    continue;
+                }
+                Glyph::Shape(g) => g,
             };
             let mut best: Option<(char, f64)> = None;
             for t in list {
@@ -303,7 +307,7 @@ mod with_samples {
             let g = matching::glyphs(&cut(&load(key), p));
             assert_eq!(g.len(), text.chars().count(), "{key} の切れ方");
             for (c, g) in text.chars().zip(g) {
-                if let (Some(l), Some(g)) = (glyph_label(c), g) {
+                if let (Some(l), Glyph::Shape(g)) = (glyph_label(c), g) {
                     t.add(p.pool, &l, g).unwrap();
                 }
             }

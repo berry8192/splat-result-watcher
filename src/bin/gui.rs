@@ -17,7 +17,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 use splat_result_watcher::engine::{Engine, EngineConfig, Snapshot};
-use splat_result_watcher::matching::{self, Patch};
+use splat_result_watcher::matching::{self, Glyph, Patch};
 use splat_result_watcher::nair;
 use splat_result_watcher::recognize::{GlyphRead, Score};
 use splat_result_watcher::templates::{self, glyph_label, place, Kind, Pool, TemplateInfo, PLACES, WORK_W};
@@ -168,6 +168,12 @@ fn source_from_file(app: State<App>, data_url: String) -> Res<String> {
 }
 
 #[derive(Serialize)]
+struct GlyphView {
+    image: Option<String>,
+    mark: Option<char>,
+}
+
+#[derive(Serialize)]
 struct Inspect {
     /// 切り出した所（色つき・拡大）
     crop: String,
@@ -175,8 +181,8 @@ struct Inspect {
     binary: String,
     /// ラベルの見本との一致度（高い順）
     scores: Vec<Score>,
-    /// 数字: 1 文字ずつの絵（小数点は null）
-    glyphs: Vec<Option<String>>,
+    /// 数字: 1 文字ずつ。字は絵、小数点とマイナスは印（形で決まるので見本は要らない）
+    glyphs: Vec<GlyphView>,
     reading: Option<GlyphRead>,
     /// 元の絵ぜんたいを読んだ結果
     seen: String,
@@ -198,7 +204,15 @@ fn inspect(app: State<App>, place_id: String) -> Res<Inspect> {
     engine.read_recognizer(|r| {
         let reading = r.recognize(&src);
         let (scores, glyphs, read) = if p.kind == Kind::Glyphs {
-            let g = r.glyphs(&src, p).iter().map(|g| g.as_ref().map(|g| patch_url(g, 2))).collect();
+            let g = r
+                .glyphs(&src, p)
+                .iter()
+                .map(|g| match g {
+                    Glyph::Dot => GlyphView { image: None, mark: Some('.') },
+                    Glyph::Minus => GlyphView { image: None, mark: Some('-') },
+                    Glyph::Shape(g) => GlyphView { image: Some(patch_url(g, 2)), mark: None },
+                })
+                .collect();
             (Vec::new(), g, Some(r.read_glyphs(&src, p)))
         } else {
             (r.scores(&src, p), Vec::new(), None)
@@ -249,9 +263,11 @@ fn register_glyphs(app: State<App>, place_id: String, text: String) -> Res<usize
     let mut todo = Vec::new();
     for (c, g) in chars.iter().zip(glyphs) {
         match (c, g) {
-            ('.', None) => {}
-            ('.', Some(_)) | (_, None) => return Err(format!("小数点の位置が合わない（{c}）")),
-            (c, Some(g)) => todo.push((glyph_label(*c).ok_or(format!("{c} は数字の見本にできない"))?, g)),
+            ('.', Glyph::Dot) | ('-', Glyph::Minus) => {}
+            ('.' | '-', _) | (_, Glyph::Dot | Glyph::Minus) => {
+                return Err(format!("小数点・マイナスの位置が合わない（{c}）"))
+            }
+            (c, Glyph::Shape(g)) => todo.push((glyph_label(*c).ok_or(format!("{c} は数字の見本にできない"))?, g)),
         }
     }
     let n = todo.len();
