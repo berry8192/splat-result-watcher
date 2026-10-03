@@ -311,3 +311,57 @@ table th {
   border-radius: 10px;
   font-size: 12px;
 }
+
+/* ---- 勝敗などを見せる小さな窓 ---- */
+.display {
+  padding: 10px 12px;
+}
+
+.display-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.display-head .gear {
+  margin-left: auto;
+  font-size: 12px;
+  padding: 2px 8px;
+}
+
+.small-stage {
+  font-size: 14px;
+  padding: 2px 10px;
+  margin: 0;
+}
+
+.last-result {
+  margin: 10px 0 6px;
+}
+
+.outcome {
+  font-size: 40px;
+  font-weight: 900;
+  line-height: 1.1;
+  letter-spacing: 1px;
+}
+
+.outcome-win {
+  color: var(--accent);
+}
+.outcome-lose {
+  color: #8c7dff;
+}
+.outcome-no_contest,
+.outcome-lose_uncounted {
+  color: var(--dim);
+  font-size: 26px;
+}
+
+.display-facts {
+  font-size: 16px;
+}
+
+.display-facts b {
+  font-size: 20px;
+}

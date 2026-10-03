@@ -86,6 +86,12 @@ impl Server {
         })
     }
 
+    /// 控えにある最近の出来事（新しい順に `n` 件）
+    pub fn recent(&self, n: usize) -> Vec<Value> {
+        let log = self.inner.log.lock().unwrap();
+        log.events.iter().rev().take(n).filter_map(|(_, t)| serde_json::from_str(t).ok()).collect()
+    }
+
     /// つながっている相手の数
     pub fn clients(&self) -> usize {
         self.inner.clients.load(Ordering::Relaxed)

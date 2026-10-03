@@ -13,8 +13,10 @@
       {
         "label": "main",
         "title": "splat-result-watcher",
-        "width": 1280,
-        "height": 860,
+        "width": 380,
+        "height": 300,
+        "minWidth": 300,
+        "minHeight": 220,
         "resizable": true
       }
     ],

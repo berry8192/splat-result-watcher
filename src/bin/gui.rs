@@ -1,5 +1,8 @@
-//! GUI の exe。起動すると撮影・照合・WebSocket のサーバ（engine.rs）を回し、画面で
-//! 段階・撮影プレビュー・見本の登録を見せる。画面は `ui/`（React + Vite）。
+//! GUI の exe。起動すると撮影・照合・WebSocket のサーバ（engine.rs）を回す。窓は 2 つ:
+//! - `main`: 勝敗などを見せる小さな窓。閉じるとアプリが終わる
+//! - `settings`: 状態・撮影プレビュー・見本の登録。`main` のボタンで開き、閉じてもアプリは続く
+//!
+//! 画面は `ui/`（React + Vite）。`index.html#settings` で設定の窓の中身になる。
 
 #![windows_subsystem = "windows"]
 
@@ -11,7 +14,7 @@ use image::codecs::jpeg::JpegEncoder;
 use image::imageops::{self, FilterType};
 use image::{DynamicImage, ImageFormat, RgbImage};
 use serde::Serialize;
-use tauri::{Manager, State};
+use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 use splat_result_watcher::engine::{Engine, EngineConfig, Snapshot};
 use splat_result_watcher::matching::{self, Patch};
@@ -71,6 +74,22 @@ fn status(app: State<App>) -> Snapshot {
 fn frame(app: State<App>, max_w: u32) -> Option<String> {
     let f = app.engine.lock().unwrap().frame()?;
     Some(jpeg_url(&f, max_w))
+}
+
+/// 設定・手動作業の窓を開く（開いていれば前に出す）
+#[tauri::command]
+fn open_settings(app: AppHandle) -> Res<()> {
+    if let Some(w) = app.get_webview_window("settings") {
+        let _ = w.unminimize();
+        w.show().map_err(err)?;
+        return w.set_focus().map_err(err);
+    }
+    WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("index.html#settings".into()))
+        .title("splat-result-watcher - 設定・見本")
+        .inner_size(1280.0, 860.0)
+        .build()
+        .map_err(err)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -300,10 +319,13 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Destroyed = event {
-                // プロジェクターを閉じてから終わる
-                if let Some(app) = window.try_state::<App>() {
-                    app.engine.lock().unwrap().stop();
+            // 見せる窓を閉じたら、設定の窓も閉じて終わる（プロジェクターを閉じてから）
+            if window.label() == "main" {
+                if let tauri::WindowEvent::Destroyed = event {
+                    if let Some(app) = window.try_state::<App>() {
+                        app.engine.lock().unwrap().stop();
+                    }
+                    window.app_handle().exit(0);
                 }
             }
         })
@@ -311,6 +333,7 @@ fn main() {
             status,
             frame,
             set_record,
+            open_settings,
             places,
             source_from_live,
             source_from_file,

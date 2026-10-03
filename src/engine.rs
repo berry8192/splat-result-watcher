@@ -120,7 +120,8 @@ impl Engine {
                 last_seq: server.last_seq(),
                 ..Default::default()
             }),
-            events: Mutex::new(VecDeque::new()),
+            // 再起動しても直近の勝敗などを見せられるよう、控えから最近の分を読んでおく
+            events: Mutex::new(server.recent(KEEP_EVENTS).into()),
             log: Mutex::new(VecDeque::new()),
             log_count: AtomicU64::new(0),
             frame: Mutex::new(None),
