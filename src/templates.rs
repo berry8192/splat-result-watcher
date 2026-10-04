@@ -495,3 +495,51 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// 登録した見本で、場所の違う数字どうしが同じ形かを比べる（`cargo test --release -- --ignored fonts --nocapture`）
+#[cfg(test)]
+mod fonts {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn compare_digit_pools() {
+        let t = Templates::load(&Templates::default_dir()).unwrap();
+        let pools = [Pool::Digit, Pool::DigitSmall, Pool::DigitTotal, Pool::DigitGauge];
+        // 同じ字の見本どうしの一番高い一致度（同じ山の中の別の見本どうしも、目安として出す）
+        for c in "0123456789".chars() {
+            let l = c.to_string();
+            let mut line = format!("{c}:");
+            for (i, a) in pools.iter().enumerate() {
+                for b in &pools[i..] {
+                    let mut best: Option<f64> = None;
+                    for ta in t.get(*a).iter().filter(|t| t.label == l) {
+                        for tb in t.get(*b).iter().filter(|t| t.label == l) {
+                            if ta.id == tb.id {
+                                continue;
+                            }
+                            let v = matching::glyph_iou(&ta.patch, &tb.patch);
+                            best = Some(best.map_or(v, |x: f64| x.max(v)));
+                        }
+                    }
+                    if let Some(v) = best {
+                        line += &format!("  {}×{} {:.2}", a.dir_name(), b.dir_name(), v);
+                    }
+                }
+            }
+            println!("{line}");
+        }
+        // 違う字どうしの一番高い一致度（同じ山の中）。これより十分高ければ「同じ形」とみなせる
+        for p in pools {
+            let mut worst: f64 = 0.0;
+            for a in t.get(p) {
+                for b in t.get(p) {
+                    if a.label != b.label {
+                        worst = worst.max(matching::glyph_iou(&a.patch, &b.patch));
+                    }
+                }
+            }
+            println!("{} の中の、違う字どうしの一番高い一致度: {worst:.2}", p.dir_name());
+        }
+    }
+}
