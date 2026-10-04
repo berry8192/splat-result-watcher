@@ -543,3 +543,63 @@ mod fonts {
         }
     }
 }
+
+/// 大きな数字の見本だけで、増減・TOTAL の数字を読めるか（`cargo test --release -- --ignored big_reads_small --nocapture`）
+#[cfg(test)]
+mod big_for_small {
+    use super::*;
+
+    fn load(key: &str) -> RgbImage {
+        let dir = crate::samples_dir().join("snaps");
+        let p = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|e| e == "png") && !p.to_string_lossy().ends_with("_ほこ.png"))
+            .find(|p| p.file_name().unwrap().to_string_lossy().contains(key))
+            .unwrap();
+        to_work(&image::open(p).unwrap().to_rgb8())
+    }
+
+    #[test]
+    #[ignore]
+    fn big_reads_small() {
+        let t = Templates::load(&Templates::default_dir()).unwrap();
+        let big = t.get(Pool::Digit);
+        for (pid, key, text) in [
+            ("power_delta", "033306", "+94.6"),
+            ("power_delta", "101412", "+62.2"),
+            ("power_delta", "101431", "+62.2"),
+            ("power_delta", "101601", "+25.0"),
+            ("power_delta", "101625", "+75.0"),
+            ("udemae_total", "040526", "25"),
+            ("udemae_total", "040905", "380"),
+        ] {
+            let p = place(pid).unwrap();
+            let g = cut_glyphs(&load(key), p);
+            let mut out = Vec::new();
+            for (c, g) in text.chars().filter(|c| c.is_ascii_digit() || *c == '.' || *c == '+').zip(g.iter()) {
+                let matching::Glyph::Shape(g) = g else {
+                    out.push(format!("{c}=形"));
+                    continue;
+                };
+                if !c.is_ascii_digit() {
+                    out.push(format!("{c}=(見本なし)"));
+                    continue;
+                }
+                // 字ごとの一番よい一致度
+                let mut best: Vec<(String, f64)> = Vec::new();
+                for tm in big {
+                    let v = matching::glyph_iou(g, &tm.patch);
+                    match best.iter_mut().find(|b| b.0 == tm.label) {
+                        Some(b) => b.1 = b.1.max(v),
+                        None => best.push((tm.label.clone(), v)),
+                    }
+                }
+                best.sort_by(|a, b| b.1.total_cmp(&a.1));
+                let ok = if best[0].0 == c.to_string() { "○" } else { "×" };
+                out.push(format!("{c}→{}{ok}{:.2}/{}{:.2}", best[0].0, best[0].1, best[1].0, best[1].1));
+            }
+            println!("{key} {text:<6} {}", out.join("  "));
+        }
+    }
+}
