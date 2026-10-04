@@ -198,7 +198,7 @@ pub const PLACES: &[Place] = &[
     },
     Place {
         id: "power_delta",
-        name: "X パワーの増減（右のしぶきの上）",
+        name: "X パワーの増減（右のしぶきの上。任意: あれば読み違いの念押しに使う）",
         short: "増減",
         roi: Roi::new(965, 440, 140, 55),
         min: 140,
@@ -449,7 +449,8 @@ pub fn gaps(t: &Templates) -> Vec<String> {
                     .collect()
             }
         };
-        if !missing.is_empty() {
+        // 増減の数字は念押しに使うだけなので、無くても「足りない」とは言わない（2026-10-04 ユーザー判断）
+        if !missing.is_empty() && p.pool != Pool::DigitSmall {
             let name = match p.pool {
                 Pool::Matching => "マッチング",
                 Pool::UdemaeTitle => "精算の見出し",

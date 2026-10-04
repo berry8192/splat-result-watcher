@@ -252,6 +252,7 @@ impl Recognizer {
                 let n = self.read_glyphs(work, p("power_number"));
                 notes.number("Xパワー", &n);
                 if let Some(value) = parse_power(&n.text) {
+                    // 増減は任意（見本があれば念押しに使う。無ければ旧値から新値へ動いたのを見届けて出す）
                     let d = self.read_glyphs(work, p("power_delta"));
                     notes.number("増減", &d);
                     return Seen::XPower { value, delta: parse_delta(&d.text) };
