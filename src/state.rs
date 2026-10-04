@@ -329,6 +329,8 @@ pub struct Machine {
     matching: Settle<Mode>,
     /// マッチング中の画面で分かったモードと、最後にその画面を見た時刻
     pending_mode: Option<(Mode, DateTime<Utc>)>,
+    /// 直前の試合のルールと始めた時刻（メニューの X パワーにルールを補う。同じローテの枠のときだけ）
+    last_rule: Option<(Rule, DateTime<Utc>)>,
     /// 今見えた自分の値（比べやすいよう 0.1 刻みの整数にしたもの）と、最後に出したもの
     observed: Settle<ObservedKey>,
     observed_sent: Option<ObservedKey>,
@@ -341,6 +343,12 @@ pub struct Machine {
 
 /// `observed` を比べる形: (x か, ルール, 値の 10 倍, 勝ち, 負け)
 type ObservedKey = (bool, Option<Rule>, i64, Option<u8>, Option<u8>);
+
+/// ローテの枠（奇数時から 2 時間）の番号。同じ枠なら同じルール
+fn rotation_slot(at: DateTime<Utc>) -> i64 {
+    // 奇数時（日本時間）に切り替わる。UTC でも奇数時は奇数時（+9 時間）
+    (at.timestamp() - 3600).div_euclid(7200)
+}
 
 /// パワーは 0.1 刻みなので 10 倍の整数で比べる
 fn tenths(v: f64) -> i64 {
@@ -365,6 +373,7 @@ impl Machine {
             header: Settle::new(STABLE),
             matching: Settle::new(STABLE),
             pending_mode: None,
+            last_rule: None,
             observed: Settle::new(STABLE),
             observed_sent: None,
             episode: None,
@@ -453,9 +462,13 @@ impl Machine {
         }
 
         // 今見えた自分の値: 落ち着いて、前に出したものと違えば出す。試合中は出さない
+        let slot_rule = self
+            .last_rule
+            .filter(|(_, t)| rotation_slot(*t) == rotation_slot(at))
+            .map(|(r, _)| r);
         let ob = match &seen {
             Seen::Observed { what, wins, losses } => Some(match what {
-                Observed::X { rule, value } => (true, *rule, tenths(*value), *wins, *losses),
+                Observed::X { rule, value } => (true, rule.or(slot_rule), tenths(*value), *wins, *losses),
                 Observed::Udemae { value } => (false, None, *value as i64 * 10, *wins, *losses),
             }),
             _ => None,
@@ -499,6 +512,9 @@ impl Machine {
                 }
             } else {
                 self.close(at, &mut out);
+                if let Some(r) = r {
+                    self.last_rule = Some((r, at));
+                }
                 let mut g = self.open(at, r);
                 g.matching_mode = self
                     .pending_mode
@@ -1151,6 +1167,21 @@ mod tests {
         let mut r = Run::new();
         r.intro(Rule::Area).feed(ox(2000.0, None, None), 6);
         assert!(r.of("observed").is_empty());
+    }
+
+    #[test]
+    fn menu_x_power_gets_the_rule_of_the_same_rotation() {
+        let menu = |v: f64| Seen::Observed { what: Observed::X { rule: None, value: v }, wins: None, losses: None };
+        // 12:00 UTC（21:00 日本時間）の枠: 11:00〜13:00 UTC。ヤグラの試合の後のメニュー
+        let mut r = Run::new();
+        r.intro(Rule::Yagura).feed(win(), 6).wait(200);
+        r.feed(menu(2100.0), 4);
+        let o = r.of("observed");
+        assert_eq!(o[0]["rule"], "yagura");
+        // 枠が変わったら付けない（13:00 UTC を越える）
+        r.wait(3600).feed(menu(2150.0), 4);
+        let o = r.of("observed");
+        assert!(o[1].get("rule").is_none(), "{:?}", o[1]);
     }
 
     #[test]

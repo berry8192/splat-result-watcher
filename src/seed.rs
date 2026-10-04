@@ -30,6 +30,8 @@ const LABELS: &[(&str, &str, &str)] = &[
     ("udemae_title", "041716", "promoted"),
     ("matching", "032333", "x"),
     ("matching", "040151", "bankara"),
+    ("menu_x_label", "031924", "x_power"),
+    ("menu_udemae_label", "040042", "udemae"),
 ];
 
 /// (場所, ファイル名の時刻, 書いてある数字)
@@ -49,6 +51,9 @@ const NUMBERS: &[(&str, &str, &str)] = &[
     ("udemae_value", "040858", "319"),
     ("udemae_total", "040526", "25"),
     ("udemae_total", "040905", "380"),
+    ("menu_x_value", "031924", "2100.0"),
+    ("menu_udemae_value", "040042", "300"),
+    ("menu_udemae_value", "041221", "1051"),
 ];
 
 fn load(dir: &Path, key: &str) -> Result<RgbImage> {
@@ -64,20 +69,23 @@ fn load(dir: &Path, key: &str) -> Result<RgbImage> {
 
 pub fn run(args: &[String], samples: &Path) -> Result<()> {
     let force = args.iter().any(|a| a == "--force");
+    // --only <場所の頭> で、その場所の見本だけを足す（例 --only menu_）。もうある見本と二重にしないため
+    let only = args.iter().position(|a| a == "--only").and_then(|i| args.get(i + 1)).cloned();
+    let wanted = |pid: &str| only.as_ref().is_none_or(|o| pid.starts_with(o.as_str()));
     let dir = Templates::default_dir();
     let mut t = Templates::load(&dir)?;
     let already: usize = templates::PLACES.iter().map(|p| t.get(p.pool).len()).sum();
-    if already > 0 && !force {
+    if already > 0 && !force && only.is_none() {
         bail!("{} にもう見本がある（{already} 個）。足すなら --force", dir.display());
     }
     let snaps = samples.join("snaps");
     let mut n = 0;
-    for (pid, key, label) in LABELS {
+    for (pid, key, label) in LABELS.iter().filter(|l| wanted(l.0)) {
         let p = place(pid).context("場所が無い")?;
         t.add(p.pool, label, templates::cut(&load(&snaps, key)?, p))?;
         n += 1;
     }
-    for (pid, key, text) in NUMBERS {
+    for (pid, key, text) in NUMBERS.iter().filter(|l| wanted(l.0)) {
         let p = place(pid).context("場所が無い")?;
         let g = templates::cut_glyphs(&load(&snaps, key)?, p);
         if g.len() != text.chars().count() {

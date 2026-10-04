@@ -48,10 +48,16 @@ pub enum Pool {
     DigitGauge,
     /// バンカラの精算の TOTAL の数字（X パワーの数字と字体が少し違い、一致度が 0.8 止まりだった）
     DigitTotal,
+    /// ロビーのメニューの「Xパワー :」の見出し（水色）
+    MenuX,
+    /// ロビーのメニューの「ウデマエ」の見出し（橙）
+    MenuUdemae,
+    /// ロビーのメニューの数字（X パワー・ウデマエポイント。色つきの少し細い字）
+    DigitMenu,
 }
 
 impl Pool {
-    pub const ALL: [Pool; 11] = [
+    pub const ALL: [Pool; 14] = [
         Pool::Matching,
         Pool::RuleIntro,
         Pool::Outcome,
@@ -63,6 +69,9 @@ impl Pool {
         Pool::UdemaeTitle,
         Pool::DigitGauge,
         Pool::DigitTotal,
+        Pool::MenuX,
+        Pool::MenuUdemae,
+        Pool::DigitMenu,
     ];
 
     pub fn dir_name(self) -> &'static str {
@@ -78,6 +87,9 @@ impl Pool {
             Pool::UdemaeTitle => "udemae_title",
             Pool::DigitGauge => "digit_gauge",
             Pool::DigitTotal => "digit_total",
+            Pool::MenuX => "menu_x",
+            Pool::MenuUdemae => "menu_udemae",
+            Pool::DigitMenu => "digit_menu",
         }
     }
 }
@@ -105,6 +117,8 @@ pub struct Place {
     pub kind: Kind,
     /// 数字の最後の 1 文字（「130p」の p）を読まずに捨てる
     pub drop_last: bool,
+    /// 白黒をいちばん明るい色で決める（色つきの字。ふつうは R・G・B のどれもが明るい所だけ白）
+    pub bright: bool,
 }
 
 /// 先頭の「=」（マイナスと同じ形に切れる）を捨てる場所。TOTAL はマイナスにならない
@@ -121,6 +135,8 @@ pub const RULE_LABELS: &[(&str, &str)] =
     &[("area", "ガチエリア"), ("yagura", "ガチヤグラ"), ("hoko", "ガチホコバトル"), ("asari", "ガチアサリ")];
 pub const POWER_LABEL_LABELS: &[(&str, &str)] = &[("x_power", "「Xパワー」の見出し")];
 pub const MATCHING_LABELS: &[(&str, &str)] = &[("x", "「Xパワー」（X マッチ）"), ("bankara", "「ウデマエ」（バンカラ）")];
+pub const MENU_X_LABELS: &[(&str, &str)] = &[("x_power", "「Xパワー :」")];
+pub const MENU_UDEMAE_LABELS: &[(&str, &str)] = &[("udemae", "「ウデマエ」")];
 pub const UDEMAE_TITLE_LABELS: &[(&str, &str)] =
     &[("finish", "挑戦終了!"), ("clear", "勝ちぬけ!"), ("promoted", "昇格おめでとう!!")];
 
@@ -134,6 +150,7 @@ pub const PLACES: &[Place] = &[
         min: WHITE_MIN,
         pool: Pool::Matching,
         drop_last: false,
+        bright: false,
         kind: Kind::Labels(MATCHING_LABELS),
     },
     Place {
@@ -144,6 +161,7 @@ pub const PLACES: &[Place] = &[
         min: WHITE_MIN,
         pool: Pool::RuleIntro,
         drop_last: false,
+        bright: false,
         kind: Kind::Labels(RULE_LABELS),
     },
     Place {
@@ -154,6 +172,7 @@ pub const PLACES: &[Place] = &[
         min: WHITE_MIN,
         pool: Pool::Outcome,
         drop_last: false,
+        bright: false,
         kind: Kind::Labels(OUTCOME_LABELS),
     },
     Place {
@@ -164,6 +183,7 @@ pub const PLACES: &[Place] = &[
         min: WHITE_MIN,
         pool: Pool::Mode,
         drop_last: false,
+        bright: false,
         kind: Kind::Labels(MODE_LABELS),
     },
     Place {
@@ -174,6 +194,7 @@ pub const PLACES: &[Place] = &[
         min: WHITE_MIN,
         pool: Pool::Rule,
         drop_last: false,
+        bright: false,
         kind: Kind::Labels(RULE_LABELS),
     },
     Place {
@@ -184,6 +205,7 @@ pub const PLACES: &[Place] = &[
         min: WHITE_MIN,
         pool: Pool::PowerLabel,
         drop_last: false,
+        bright: false,
         kind: Kind::Labels(POWER_LABEL_LABELS),
     },
     Place {
@@ -194,6 +216,7 @@ pub const PLACES: &[Place] = &[
         min: WHITE_MIN,
         pool: Pool::Digit,
         drop_last: false,
+        bright: false,
         kind: Kind::Glyphs,
     },
     Place {
@@ -204,6 +227,7 @@ pub const PLACES: &[Place] = &[
         min: 140,
         pool: Pool::DigitSmall,
         drop_last: false,
+        bright: false,
         kind: Kind::Glyphs,
     },
     Place {
@@ -214,6 +238,7 @@ pub const PLACES: &[Place] = &[
         min: WHITE_MIN,
         pool: Pool::Digit,
         drop_last: false,
+        bright: false,
         kind: Kind::Glyphs,
     },
     Place {
@@ -224,6 +249,7 @@ pub const PLACES: &[Place] = &[
         min: WHITE_MIN,
         pool: Pool::UdemaeTitle,
         drop_last: false,
+        bright: false,
         kind: Kind::Labels(UDEMAE_TITLE_LABELS),
     },
     Place {
@@ -236,6 +262,7 @@ pub const PLACES: &[Place] = &[
         min: 165,
         pool: Pool::DigitGauge,
         drop_last: true,
+        bright: false,
         kind: Kind::Glyphs,
     },
     Place {
@@ -246,6 +273,7 @@ pub const PLACES: &[Place] = &[
         min: WHITE_MIN,
         pool: Pool::DigitTotal,
         drop_last: true,
+        bright: false,
         kind: Kind::Glyphs,
     },
     Place {
@@ -256,6 +284,52 @@ pub const PLACES: &[Place] = &[
         min: 150,
         pool: Pool::Digit,
         drop_last: true,
+        bright: false,
+        kind: Kind::Glyphs,
+    },
+    Place {
+        id: "menu_x_label",
+        name: "ロビーのメニューの右上の「Xパワー :」（水色の字）",
+        short: "メニュー X",
+        roi: Roi::new(1288, 156, 108, 42),
+        min: WHITE_MIN,
+        pool: Pool::MenuX,
+        drop_last: false,
+        bright: true,
+        kind: Kind::Labels(MENU_X_LABELS),
+    },
+    Place {
+        id: "menu_x_value",
+        name: "ロビーのメニューの X パワーの数字（「:」の後ろ）",
+        short: "メニューの X パワー",
+        roi: Roi::new(1393, 156, 110, 42),
+        min: WHITE_MIN,
+        pool: Pool::DigitMenu,
+        drop_last: false,
+        bright: true,
+        kind: Kind::Glyphs,
+    },
+    Place {
+        id: "menu_udemae_label",
+        name: "ロビーのメニューの右上の「ウデマエ」（橙の小さな字）",
+        short: "メニュー ウデマエ",
+        roi: Roi::new(1320, 148, 90, 32),
+        // 暗めの橙（赤 185 前後）の字が暗い茶色（赤 70 前後）の上にある
+        min: 150,
+        pool: Pool::MenuUdemae,
+        drop_last: false,
+        bright: true,
+        kind: Kind::Labels(MENU_UDEMAE_LABELS),
+    },
+    Place {
+        id: "menu_udemae_value",
+        name: "ロビーのメニューのウデマエポイント（ランクの字の右。最後の p は読まない）",
+        short: "メニューのウデマエ",
+        roi: Roi::new(1375, 184, 135, 38),
+        min: WHITE_MIN,
+        pool: Pool::DigitMenu,
+        drop_last: true,
+        bright: true,
         kind: Kind::Glyphs,
     },
 ];
@@ -420,7 +494,16 @@ pub fn cut_glyphs(work: &RgbImage, place: &Place) -> Vec<matching::Glyph> {
 
 /// 照合する大きさのゲーム穴から、その場所を白黒で切り出す（見本にするもの。ずらす余白なし）
 pub fn cut(work: &RgbImage, place: &Place) -> Patch {
-    matching::binary_at(work, place.roi, 0, place.min)
+    cut_margin(work, place, 0)
+}
+
+/// ずらして探す余白を付けて切り出す（照合するもの）
+pub fn cut_margin(work: &RgbImage, place: &Place, margin: u32) -> Patch {
+    if place.bright {
+        matching::binary_bright(work, place.roi, margin, place.min)
+    } else {
+        matching::binary_at(work, place.roi, margin, place.min)
+    }
 }
 
 /// 足りない見本を、人が読む形で並べる
@@ -456,6 +539,9 @@ pub fn gaps(t: &Templates) -> Vec<String> {
                 Pool::UdemaeTitle => "精算の見出し",
                 Pool::DigitGauge => "精算の小さな数字",
                 Pool::DigitTotal => "精算の TOTAL の数字",
+                Pool::MenuX => "メニューの「Xパワー :」",
+                Pool::MenuUdemae => "メニューの「ウデマエ」",
+                Pool::DigitMenu => "メニューの数字",
                 Pool::RuleIntro => "ルール紹介",
                 Pool::Outcome => "勝敗",
                 Pool::Mode => "モード",

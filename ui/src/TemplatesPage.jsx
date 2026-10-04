@@ -9,6 +9,13 @@ const POOL_NAMES = {
   power_label: "「Xパワー」の見出し",
   digit: "大きな数字",
   digit_small: "増減の数字",
+  matching: "マッチング",
+  udemae_title: "精算の見出し",
+  digit_gauge: "精算の小さな数字",
+  digit_total: "精算の TOTAL の数字",
+  menu_x: "メニューの「Xパワー :」",
+  menu_udemae: "メニューの「ウデマエ」",
+  digit_menu: "メニューの数字",
 };
 
 /** ファイルを data URL で読む */

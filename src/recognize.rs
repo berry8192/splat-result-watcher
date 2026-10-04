@@ -12,7 +12,7 @@ use serde::Serialize;
 
 use crate::matching::{self, Glyph};
 use crate::nair;
-use crate::state::{Mode, Note, Outcome, Rule, Seen};
+use crate::state::{Mode, Note, Observed, Outcome, Rule, Seen};
 use crate::templates::{self, glyph_char, place, Place, Templates};
 use crate::NO_SIGNAL_DARK;
 
@@ -28,6 +28,8 @@ const RULE_MIN: f64 = 0.6;
 const POWER_LABEL_MIN: f64 = 0.6;
 const MATCHING_MIN: f64 = 0.6;
 const UDEMAE_TITLE_MIN: f64 = 0.6;
+/// メニューの見出しは小さな字で崩れやすい（「ウデマエ」は別の画面の見本と 0.52）。数字の形でも確かめるので低めでよい
+const MENU_LABEL_MIN: f64 = 0.4;
 /// 数字の 1 文字（正しい字は 0.87 以上、2 番目に近い字は 0.79 以下だった）
 pub const GLYPH_MIN: f64 = 0.85;
 
@@ -107,7 +109,7 @@ impl Recognizer {
         if list.is_empty() {
             return Vec::new();
         }
-        let sample = matching::binary_at(work, place.roi, SHIFT, place.min);
+        let sample = templates::cut_margin(work, place, SHIFT);
         let mut best: Vec<Score> = Vec::new();
         for t in list {
             let v = matching::iou(&t.patch, &sample);
@@ -244,6 +246,22 @@ impl Recognizer {
             }
         }
 
+        // ロビーのメニューに出ている自分の値（observed）
+        if self.decide(work, p("menu_x_label"), MENU_LABEL_MIN, notes).is_some() {
+            let n = self.read_glyphs(work, p("menu_x_value"));
+            notes.number("メニューの X パワー", &n);
+            if let Some(value) = parse_power(&n.text) {
+                return Seen::Observed { what: Observed::X { rule: None, value }, wins: None, losses: None };
+            }
+        }
+        if self.decide(work, p("menu_udemae_label"), MENU_LABEL_MIN, notes).is_some() {
+            let n = self.read_glyphs(work, p("menu_udemae_value"));
+            notes.number("メニューのウデマエ", &n);
+            if let Some(value) = parse_points(&n.text) {
+                return Seen::Observed { what: Observed::Udemae { value }, wins: None, losses: None };
+            }
+        }
+
         let label = self.scores(work, p("power_label"));
         if let Some(s) = label.first() {
             notes.text.push(format!("「Xパワー」: 一致度 {:.2}", s.score));
@@ -368,6 +386,8 @@ mod with_samples {
             ("udemae_title", "041716", "promoted"),
             ("matching", "032333", "x"),
             ("matching", "040151", "bankara"),
+            ("menu_x_label", "031924", "x_power"),
+            ("menu_udemae_label", "040042", "udemae"),
         ] {
             let p = place(place_id).unwrap();
             t.add(p.pool, label, cut(&load(key), p)).unwrap();
@@ -386,6 +406,9 @@ mod with_samples {
             ("udemae_value", "040905", "365"),
             ("udemae_total", "040526", "25"),
             ("udemae_total", "040905", "380"),
+            ("menu_x_value", "031924", "2100.0"),
+            ("menu_udemae_value", "040042", "300"),
+            ("menu_udemae_value", "041221", "1051"),
         ] {
             let p = place(place_id).unwrap();
             let g = templates::cut_glyphs(&load(key), p);
@@ -419,10 +442,15 @@ mod with_samples {
         assert_eq!(see("040905"), Seen::Udemae { value: 365, total: Some(380) }, "{}", why("040905"));
         assert_eq!(see("041716"), Seen::UdemaeReset(300), "{}", why("041716"));
         assert_eq!(see("032333"), Seen::Matching(Mode::X));
+        // メニューの値（手元の見本では字がそろわないので、見本にした画面を読んで仕組みが通るかだけ確かめる）
+        let menu_x = Seen::Observed { what: Observed::X { rule: None, value: 2100.0 }, wins: None, losses: None };
+        assert_eq!(see("031924"), menu_x, "{}", why("031924"));
+        let menu_ud = Seen::Observed { what: Observed::Udemae { value: 1051 }, wins: None, losses: None };
+        assert_eq!(see("041221"), menu_ud, "{}", why("041221"));
         assert_eq!(see("040151"), Seen::Matching(Mode::BankaraChallenge));
         // メニュー・順位・試合中（無効試合の札・バトル中・Finish!）・X に挑戦できる・進行
         let quiet = [
-            "031924", "033416", "042113", "041735", "134014", "134030", "134042", "134056", "040302", "041437",
+            "033416", "042113", "041735", "041804", "134014", "134030", "134042", "134056", "040302", "041437",
         ];
         for key in quiet {
             assert_eq!(see(key), Seen::Unknown, "{key} は何でもない");

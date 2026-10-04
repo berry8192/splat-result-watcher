@@ -64,6 +64,11 @@ pub fn binary(img: &RgbImage, roi: Roi, margin: u32) -> Patch {
     binary_at(img, roi, margin, WHITE_MIN)
 }
 
+/// いちばん明るい色（R・G・B の最大）がしきい値以上なら白。暗いパネルの上の色つきの字（メニューの水色・クリーム色）用
+pub fn binary_bright(img: &RgbImage, roi: Roi, margin: u32, min: u8) -> Patch {
+    cut(img, roi, margin, |[r, g, b]| (r.max(g).max(b) >= min) as u8)
+}
+
 /// しきい値を変えて 2 値にする（明るい色の上の白い字など。X パワーの増減は水色のしぶきの上で 140）
 pub fn binary_at(img: &RgbImage, roi: Roi, margin: u32, min: u8) -> Patch {
     cut(img, roi, margin, |[r, g, b]| (r.min(g).min(b) >= min) as u8)
