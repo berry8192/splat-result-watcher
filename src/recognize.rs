@@ -10,7 +10,7 @@
 use image::RgbImage;
 use serde::Serialize;
 
-use crate::matching::{self, Glyph};
+use crate::matching::{self, Glyph, Roi};
 use crate::nair;
 use crate::state::{Mode, Note, Observed, Outcome, Rule, Seen};
 use crate::templates::{self, glyph_char, place, Place, Templates};
@@ -30,6 +30,43 @@ const MATCHING_MIN: f64 = 0.6;
 const UDEMAE_TITLE_MIN: f64 = 0.6;
 /// メニューの見出しは小さな字で崩れやすい（「ウデマエ」は別の画面の見本と 0.52）。数字の形でも確かめるので低めでよい
 const MENU_LABEL_MIN: f64 = 0.4;
+const PROGRESS_LABEL_MIN: f64 = 0.6;
+
+/// 進行の○とイカを色で数える場所（基準 1536×864）と、かたまりの幅の目安（2026-10-04 に見本 10 枚で合った）
+struct Strip {
+    stamps: Roi,
+    stamp_w: u32,
+    squids: Roi,
+    squid_w: u32,
+}
+
+/// 試合後の進行の画面（X・昇格戦の○ 3 個も、チャレンジの 5 個も入る幅）
+const PROGRESS_STRIP: Strip = Strip { stamps: Roi::new(540, 415, 460, 90), stamp_w: 83, squids: Roi::new(555, 520, 290, 60), squid_w: 36 };
+/// ロビーのメニュー（X）。判子の付いた見本はまだ無いので、幅は○の大きさからの見積もり
+const MENU_X_STRIP: Strip = Strip { stamps: Roi::new(1310, 300, 190, 60), stamp_w: 50, squids: Roi::new(1325, 362, 130, 36), squid_w: 20 };
+/// ロビーのメニュー（バンカラ。チャレンジの○ 5 個・昇格戦の○ 3 個とも入る幅）
+const MENU_BANKARA_STRIP: Strip =
+    Strip { stamps: Roi::new(1215, 300, 290, 60), stamp_w: 50, squids: Roi::new(1225, 362, 240, 36), squid_w: 20 };
+
+/// WIN の判子（黄緑）
+fn is_stamp([r, g, b]: [u8; 3]) -> bool {
+    r >= 170 && g >= 180 && b <= 110
+}
+
+/// 残っているイカ（橙。負けたイカは灰色に ×）
+fn is_squid([r, g, b]: [u8; 3]) -> bool {
+    r >= 190 && (70..=170).contains(&g) && b <= 90
+}
+
+/// 勝ち数（判子の数）と負け数（3 − 残っているイカ）。イカが 3 匹より多く見えたら数えない
+fn count_progress(work: &RgbImage, s: &Strip) -> Option<(u8, u8)> {
+    let range = |w: u32| (w / 2, w * 8 / 5);
+    let (a, b) = range(s.stamp_w);
+    let wins = matching::count_color_runs(work, s.stamps, is_stamp, a, b);
+    let (a, b) = range(s.squid_w);
+    let squids = matching::count_color_runs(work, s.squids, is_squid, a, b);
+    (wins <= 5 && squids <= 3).then_some((wins as u8, 3 - squids as u8))
+}
 /// 数字の 1 文字（正しい字は 0.87 以上、2 番目に近い字は 0.79 以下だった）
 pub const GLYPH_MIN: f64 = 0.85;
 
@@ -251,14 +288,26 @@ impl Recognizer {
             let n = self.read_glyphs(work, p("menu_x_value"));
             notes.number("メニューの X パワー", &n);
             if let Some(value) = parse_power(&n.text) {
-                return Seen::Observed { what: Observed::X { rule: None, value }, wins: None, losses: None };
+                let wl = count_progress(work, &MENU_X_STRIP);
+                notes.text.push(format!("メニューの進行: {wl:?}"));
+                return Seen::Observed { what: Observed::X { rule: None, value }, wins: wl.map(|w| w.0), losses: wl.map(|w| w.1) };
             }
         }
         if self.decide(work, p("menu_udemae_label"), MENU_LABEL_MIN, notes).is_some() {
             let n = self.read_glyphs(work, p("menu_udemae_value"));
             notes.number("メニューのウデマエ", &n);
             if let Some(value) = parse_points(&n.text) {
-                return Seen::Observed { what: Observed::Udemae { value }, wins: None, losses: None };
+                let wl = count_progress(work, &MENU_BANKARA_STRIP);
+                notes.text.push(format!("メニューの進行: {wl:?}"));
+                return Seen::Observed { what: Observed::Udemae { value }, wins: wl.map(|w| w.0), losses: wl.map(|w| w.1) };
+            }
+        }
+
+        // 試合後の進行の画面: 勝ち負けは数字ではなく、○の判子とイカの色で数える（数字は判子の後から変わる）
+        if self.decide(work, p("progress_label"), PROGRESS_LABEL_MIN, notes).is_some() {
+            if let Some((wins, losses)) = count_progress(work, &PROGRESS_STRIP) {
+                notes.text.push(format!("進行: {wins}-{losses}"));
+                return Seen::Progress { wins, losses, stamps: Some(wins) };
             }
         }
 
@@ -388,6 +437,7 @@ mod with_samples {
             ("matching", "040151", "bankara"),
             ("menu_x_label", "031924", "x_power"),
             ("menu_udemae_label", "040042", "udemae"),
+            ("progress_label", "032850", "win_lose"),
         ] {
             let p = place(place_id).unwrap();
             t.add(p.pool, label, cut(&load(key), p)).unwrap();
@@ -443,15 +493,22 @@ mod with_samples {
         assert_eq!(see("041716"), Seen::UdemaeReset(300), "{}", why("041716"));
         assert_eq!(see("032333"), Seen::Matching(Mode::X));
         // メニューの値（手元の見本では字がそろわないので、見本にした画面を読んで仕組みが通るかだけ確かめる）
-        let menu_x = Seen::Observed { what: Observed::X { rule: None, value: 2100.0 }, wins: None, losses: None };
+        let menu_x = Seen::Observed { what: Observed::X { rule: None, value: 2100.0 }, wins: Some(0), losses: Some(0) };
         assert_eq!(see("031924"), menu_x, "{}", why("031924"));
-        let menu_ud = Seen::Observed { what: Observed::Udemae { value: 1051 }, wins: None, losses: None };
+        let menu_ud = Seen::Observed { what: Observed::Udemae { value: 1051 }, wins: Some(0), losses: Some(0) };
         assert_eq!(see("041221"), menu_ud, "{}", why("041221"));
+        // 進行の画面（勝ち負けは色で数える。見本にしたのは 032850 の「WIN LOSE」の見出しだけ）
+        let pr = |w, l| Seen::Progress { wins: w, losses: l, stamps: Some(w) };
+        for (key, w, l) in [("032900", 1, 0), ("040351", 0, 1), ("040627", 3, 1), ("040643", 3, 2), ("041437", 2, 1), ("041454", 2, 2)] {
+            assert_eq!(see(key), pr(w, l), "{key}: {}", why(key));
+        }
         assert_eq!(see("040151"), Seen::Matching(Mode::BankaraChallenge));
         // メニュー・順位・試合中（無効試合の札・バトル中・Finish!）・X に挑戦できる・進行
         let quiet = [
-            "033416", "042113", "041735", "041804", "134014", "134030", "134042", "134056", "040302", "041437",
+            "033416", "042113", "041735", "041804", "134014", "134030", "134042", "134056",
         ];
+        // X のセット完了の画面（「3 - 0」と WIN の札が並ぶ）を、進行の画面と取り違えない
+        assert!(matches!(see("033100"), Seen::XPower { .. }), "{}", why("033100"));
         for key in quiet {
             assert_eq!(see(key), Seen::Unknown, "{key} は何でもない");
         }

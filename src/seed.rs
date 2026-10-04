@@ -32,6 +32,7 @@ const LABELS: &[(&str, &str, &str)] = &[
     ("matching", "040151", "bankara"),
     ("menu_x_label", "031924", "x_power"),
     ("menu_udemae_label", "040042", "udemae"),
+    ("progress_label", "032850", "win_lose"),
 ];
 
 /// (場所, ファイル名の時刻, 書いてある数字)

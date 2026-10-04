@@ -48,6 +48,8 @@ pub enum Pool {
     DigitGauge,
     /// バンカラの精算の TOTAL の数字（X パワーの数字と字体が少し違い、一致度が 0.8 止まりだった）
     DigitTotal,
+    /// 試合後の進行の画面の「WIN LOSE」の見出し
+    ProgressLabel,
     /// ロビーのメニューの「Xパワー :」の見出し（水色）
     MenuX,
     /// ロビーのメニューの「ウデマエ」の見出し（橙）
@@ -57,7 +59,7 @@ pub enum Pool {
 }
 
 impl Pool {
-    pub const ALL: [Pool; 14] = [
+    pub const ALL: [Pool; 15] = [
         Pool::Matching,
         Pool::RuleIntro,
         Pool::Outcome,
@@ -69,6 +71,7 @@ impl Pool {
         Pool::UdemaeTitle,
         Pool::DigitGauge,
         Pool::DigitTotal,
+        Pool::ProgressLabel,
         Pool::MenuX,
         Pool::MenuUdemae,
         Pool::DigitMenu,
@@ -87,6 +90,7 @@ impl Pool {
             Pool::UdemaeTitle => "udemae_title",
             Pool::DigitGauge => "digit_gauge",
             Pool::DigitTotal => "digit_total",
+            Pool::ProgressLabel => "progress_label",
             Pool::MenuX => "menu_x",
             Pool::MenuUdemae => "menu_udemae",
             Pool::DigitMenu => "digit_menu",
@@ -135,6 +139,7 @@ pub const RULE_LABELS: &[(&str, &str)] =
     &[("area", "ガチエリア"), ("yagura", "ガチヤグラ"), ("hoko", "ガチホコバトル"), ("asari", "ガチアサリ")];
 pub const POWER_LABEL_LABELS: &[(&str, &str)] = &[("x_power", "「Xパワー」の見出し")];
 pub const MATCHING_LABELS: &[(&str, &str)] = &[("x", "「Xパワー」（X マッチ）"), ("bankara", "「ウデマエ」（バンカラ）")];
+pub const PROGRESS_LABELS: &[(&str, &str)] = &[("win_lose", "「WIN LOSE」")];
 pub const MENU_X_LABELS: &[(&str, &str)] = &[("x_power", "「Xパワー :」")];
 pub const MENU_UDEMAE_LABELS: &[(&str, &str)] = &[("udemae", "「ウデマエ」")];
 pub const UDEMAE_TITLE_LABELS: &[(&str, &str)] =
@@ -331,6 +336,17 @@ pub const PLACES: &[Place] = &[
         drop_last: true,
         bright: true,
         kind: Kind::Glyphs,
+    },
+    Place {
+        id: "progress_label",
+        name: "試合後の進行の画面の「WIN LOSE」（勝ち負けは○の判子とイカの色で数える）",
+        short: "進行",
+        roi: Roi::new(678, 278, 192, 34),
+        min: WHITE_MIN,
+        pool: Pool::ProgressLabel,
+        drop_last: false,
+        bright: false,
+        kind: Kind::Labels(PROGRESS_LABELS),
     },
 ];
 
@@ -539,6 +555,7 @@ pub fn gaps(t: &Templates) -> Vec<String> {
                 Pool::UdemaeTitle => "精算の見出し",
                 Pool::DigitGauge => "精算の小さな数字",
                 Pool::DigitTotal => "精算の TOTAL の数字",
+                Pool::ProgressLabel => "進行の「WIN LOSE」",
                 Pool::MenuX => "メニューの「Xパワー :」",
                 Pool::MenuUdemae => "メニューの「ウデマエ」",
                 Pool::DigitMenu => "メニューの数字",

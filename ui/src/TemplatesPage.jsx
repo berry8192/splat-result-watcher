@@ -13,6 +13,7 @@ const POOL_NAMES = {
   udemae_title: "精算の見出し",
   digit_gauge: "精算の小さな数字",
   digit_total: "精算の TOTAL の数字",
+  progress_label: "進行の「WIN LOSE」",
   menu_x: "メニューの「Xパワー :」",
   menu_udemae: "メニューの「ウデマエ」",
   digit_menu: "メニューの数字",

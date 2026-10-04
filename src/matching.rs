@@ -64,6 +64,29 @@ pub fn binary(img: &RgbImage, roi: Roi, margin: u32) -> Patch {
     binary_at(img, roi, margin, WHITE_MIN)
 }
 
+/// 色の条件に合う画素の、列のかたまりを数える。幅（基準 1536 の座標）が `w_min`〜`w_max` のものだけ
+/// （進行の○の WIN の判子・残っているイカを色で数える。背景の明かりなどの別の大きさのものは数えない）
+pub fn count_color_runs(img: &RgbImage, roi: Roi, pred: impl Fn([u8; 3]) -> bool, w_min: u32, w_max: u32) -> usize {
+    let p = cut(img, roi, 0, |c| pred(c) as u8);
+    let scale = |v: u32| (v as u64 * img.width() as u64 / BASE_W as u64) as u32;
+    let (lo, hi) = (scale(w_min).max(1), scale(w_max).max(1));
+    let col = |x: u32| (0..p.h).any(|y| p.px[(y * p.w + x) as usize] != 0);
+    let (mut n, mut start) = (0, None);
+    for x in 0..=p.w {
+        match (x < p.w && col(x), start) {
+            (true, None) => start = Some(x),
+            (false, Some(s)) => {
+                if (lo..=hi).contains(&(x - s)) {
+                    n += 1;
+                }
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    n
+}
+
 /// いちばん明るい色（R・G・B の最大）がしきい値以上なら白。暗いパネルの上の色つきの字（メニューの水色・クリーム色）用
 pub fn binary_bright(img: &RgbImage, roi: Roi, margin: u32, min: u8) -> Patch {
     cut(img, roi, margin, |[r, g, b]| (r.max(g).max(b) >= min) as u8)
