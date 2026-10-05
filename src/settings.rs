@@ -47,11 +47,14 @@ pub struct DisplaySettings {
     /// 字の縁取りの太さ（px。0 で無し）と色。透明な背景で読めるようにする
     pub outline_px: u32,
     pub outline_color: String,
+    /// 字の色（パワー・勝敗）と、モードとルールの色
+    pub text_color: String,
+    pub head_color: String,
 }
 
 impl Default for DisplaySettings {
     fn default() -> Self {
-        DisplaySettings { layout: "yoko".into(), bg: "#16161d".into(), font_head: 22, font_power: 72, font_set: 30, outline_px: 0, outline_color: "#000000".into() }
+        DisplaySettings { layout: "yoko".into(), bg: "#16161d".into(), font_head: 22, font_power: 72, font_set: 30, outline_px: 0, outline_color: "#000000".into(), text_color: "#ffffff".into(), head_color: "#c8c8d2".into() }
     }
 }
 

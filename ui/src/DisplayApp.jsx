@@ -78,7 +78,7 @@ export default function DisplayApp() {
     };
   }, []);
 
-  const d = settings?.display ?? { layout: "yoko", bg: "#16161d", font_head: 22, font_power: 72, font_set: 30, outline_px: 0, outline_color: "#000000" };
+  const d = settings?.display ?? { layout: "yoko", bg: "#16161d", font_head: 22, font_power: 72, font_set: 30, outline_px: 0, outline_color: "#000000", text_color: "#ffffff", head_color: "#c8c8d2" };
   // 縁取り: 字の外側にだけ描く（paint-order）。太さは外側に出る分なので 2 倍にする
   const outline = d.outline_px > 0 ? { WebkitTextStroke: `${d.outline_px * 2}px ${d.outline_color}`, paintOrder: "stroke fill" } : {};
   const layout = LAYOUTS[d.layout] ? d.layout : "yoko";
@@ -135,14 +135,14 @@ export default function DisplayApp() {
   return (
     <div
       className={`disp disp-${layout}`}
-      style={{ background: d.bg, padding: `${PAD.y}px ${PAD.x}px` }}
+      style={{ background: d.bg, color: d.text_color, padding: `${PAD.y}px ${PAD.x}px` }}
       onMouseDown={onMouseDown}
       onContextMenu={onContextMenu}
     >
       {/* 横長は 2 段組み（左: モードとルールの下に勝敗、右: パワー）。縦長は上から順に */}
       <div className="disp-box" ref={box} style={outline}>
         <div className="disp-left">
-          <span className="disp-head" style={{ fontSize: d.font_head }}>
+          <span className="disp-head" style={{ fontSize: d.font_head, color: d.head_color }}>
             {head || " "}
           </span>
           {layout === "tate" && powerEl}

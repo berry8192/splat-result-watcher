@@ -94,6 +94,12 @@ export default function SettingsPage() {
           <span className="small">　窓の大きさは字に合わせて変わる。「残す」ですぐ効く</span>
         </label>
         <label>
+          字の色
+          <input type="color" value={form.display.text_color} onChange={(e) => setD("text_color", e.target.value)} />
+          　モードとルールの色
+          <input type="color" value={form.display.head_color} onChange={(e) => setD("head_color", e.target.value)} />
+        </label>
+        <label>
           縁取り（px、0 で無し）
           <input type="number" min="0" max="20" value={form.display.outline_px} onChange={(e) => setD("outline_px", Number(e.target.value))} />
           　色
