@@ -410,6 +410,32 @@ body.display-window #root {
   padding: 14px 4px;
 }
 
+/* 手動操作 */
+.manual-now {
+  display: flex;
+  gap: 16px;
+  align-items: baseline;
+  padding: 8px 4px 4px;
+  font-size: 15px;
+}
+.manual-now b {
+  font-size: 20px;
+}
+.manual-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 6px 0;
+}
+.manual-row input[type="number"] {
+  width: 120px;
+}
+.manual-row b {
+  min-width: 1.5em;
+  text-align: center;
+}
+
 /* ゲーム画面の位置合わせ: 配信の出力の上に枠を重ねる */
 .area-picker {
   position: relative;
@@ -424,7 +450,7 @@ body.display-window #root {
 .area-rect {
   position: absolute;
   box-sizing: border-box;
-  border: 2px solid var(--accent);
+  border: 1px solid var(--accent);
   background: rgba(232, 240, 40, 0.08);
   cursor: move;
 }
@@ -440,10 +466,10 @@ body.display-window #root {
 }
 .area-handle {
   position: absolute;
-  right: -7px;
-  bottom: -7px;
-  width: 14px;
-  height: 14px;
+  right: -5px;
+  bottom: -5px;
+  width: 10px;
+  height: 10px;
   background: var(--accent);
   border-radius: 2px;
   cursor: nwse-resize;

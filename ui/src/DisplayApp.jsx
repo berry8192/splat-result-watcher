@@ -34,8 +34,9 @@ const DEFAULT_DISPLAY = {
   head_color: "#8fc5ff",
 };
 
-/** 出来事（新しい順）から、見せるものを拾う。それぞれ一番新しいものだけ */
-function pick(events) {
+/** 出来事（新しい順）から、見せるものを拾う。それぞれ一番新しいものだけ。
+ * `lobby`（ロビーで選んでいるモードとルール）と `manual`（手で直した値）も見る */
+export function pick(events) {
   let mode = null;
   let rule = null;
   let xp = null;
@@ -43,18 +44,18 @@ function pick(events) {
   let set = null;
   let ended = null; // セットを終わらせたパワーの変動（match_id）と、その試合の勝敗
   for (const e of events) {
-    if (mode == null && (e.type === "result" || e.type === "battle_started") && e.mode) mode = e.mode;
+    if (mode == null && (e.type === "result" || e.type === "battle_started" || e.type === "lobby") && e.mode) mode = e.mode;
     if (mode == null && e.type === "observed") mode = e.kind === "x" ? "x" : "bankara";
-    if (rule == null && e.rule && (e.type === "result" || e.type === "battle_started" || e.type === "observed")) rule = e.rule;
+    if (rule == null && e.rule && (e.type === "result" || e.type === "battle_started" || e.type === "observed" || e.type === "lobby")) rule = e.rule;
     if (e.type === "power" && !e.calibrating && e.after != null) {
       if (e.kind === "x" && xp == null) xp = e.after;
       if (e.kind === "udemae" && udemae == null) udemae = e.after;
     }
-    if (e.type === "observed" && e.value != null) {
+    if ((e.type === "observed" || e.type === "manual") && e.value != null) {
       if (e.kind === "x" && xp == null) xp = e.value;
       if (e.kind === "udemae" && udemae == null) udemae = e.value;
     }
-    if (set == null && e.wins != null && e.losses != null && (e.type === "set_progress" || e.type === "observed")) {
+    if (set == null && e.wins != null && e.losses != null && (e.type === "set_progress" || e.type === "observed" || e.type === "manual")) {
       set = { wins: e.wins, losses: e.losses };
     }
     // パワーの変動が出たらセットは終わっている（3 勝目・3 敗目の後は進行の画面が出ない）。次のセットは 0 勝 0 敗から

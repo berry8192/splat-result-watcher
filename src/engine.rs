@@ -242,6 +242,20 @@ impl Engine {
         *self.shared.game_area.lock().unwrap() = area;
     }
 
+    /// 手で直した値（設定ウィンドウの「手動操作」）をイベントとして流す。`type` と `at` はここで付ける
+    pub fn publish_manual(&self, mut ev: Value) -> Result<u64> {
+        ev["type"] = "manual".into();
+        ev["at"] = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true).into();
+        let s = &self.shared;
+        let seq = s.server.publish(ev.clone())?;
+        ev["seq"] = seq.into();
+        s.log(format!("イベント #{seq}（手動操作）: {ev}"));
+        let mut evs = s.events.lock().unwrap();
+        evs.push_front(ev);
+        evs.truncate(KEEP_EVENTS);
+        Ok(seq)
+    }
+
     /// 直近の画面（古い順）。見本の登録で、遊んだ後に戻って選ぶ
     pub fn recent(&self) -> Vec<RecentFrame> {
         self.shared.recent.lock().unwrap().iter().cloned().collect()

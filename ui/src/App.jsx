@@ -3,16 +3,18 @@ import StatusPage from "./StatusPage.jsx";
 import TemplatesPage from "./TemplatesPage.jsx";
 import SettingsPage from "./SettingsPage.jsx";
 import MaterialsPage from "./MaterialsPage.jsx";
+import ManualPage from "./ManualPage.jsx";
 
 const TABS = [
-  { id: "status", name: "状態" },
+  { id: "manual", name: "手動操作" },
+  { id: "settings", name: "設定" },
   { id: "materials", name: "テンプレートの状況" },
   { id: "templates", name: "テンプレートの登録" },
-  { id: "settings", name: "設定" },
+  { id: "status", name: "状態" },
 ];
 
 export default function App() {
-  const [tab, setTab] = useState("status");
+  const [tab, setTab] = useState("manual");
   return (
     <div className="app">
       <nav className="tabs">
@@ -24,6 +26,7 @@ export default function App() {
         ))}
       </nav>
       {/* 状態のページは裏でも動かし続ける必要がないので、開いているものだけ描く */}
+      {tab === "manual" && <ManualPage />}
       {tab === "status" && <StatusPage />}
       {tab === "materials" && <MaterialsPage />}
       {tab === "templates" && <TemplatesPage />}

@@ -140,6 +140,36 @@ fn open_api_doc() -> Res<()> {
         .map_err(err)
 }
 
+/// 手で直した値を流す。`ev` は {kind, rule?, value?, wins?, losses?}。差分ではなく直した後の値
+#[tauri::command]
+fn manual(app: State<App>, ev: serde_json::Value) -> Res<u64> {
+    let kind = ev["kind"].as_str().ok_or("kind がありません")?;
+    if !matches!(kind, "x" | "udemae") {
+        return Err(format!("kind が不正です: {kind}"));
+    }
+    let mut out = serde_json::json!({ "kind": kind });
+    if let Some(r) = ev["rule"].as_str() {
+        if !matches!(r, "area" | "yagura" | "hoko" | "asari") {
+            return Err(format!("rule が不正です: {r}"));
+        }
+        out["rule"] = r.into();
+    }
+    if !ev["value"].is_null() {
+        let v = ev["value"].as_f64().filter(|v| v.is_finite()).ok_or("value が数値ではありません")?;
+        out["value"] = if kind == "x" { serde_json::json!((v * 10.0).round() / 10.0) } else { serde_json::json!(v.round() as i64) };
+    }
+    for k in ["wins", "losses"] {
+        if !ev[k].is_null() {
+            let n = ev[k].as_u64().filter(|n| *n <= 9).ok_or_else(|| format!("{k} は 0〜9 の整数にしてください"))?;
+            out[k] = n.into();
+        }
+    }
+    if out["value"].is_null() && out["wins"].is_null() && out["losses"].is_null() {
+        return Err("直す値がありません".into());
+    }
+    app.engine.lock().unwrap().publish_manual(out).map_err(err)
+}
+
 /// 今の試合を捨てて待機に戻す
 #[tauri::command]
 fn reset_game(app: State<App>) {
@@ -479,6 +509,7 @@ fn main() {
             get_settings,
             save_settings,
             reset_game,
+            manual,
             open_api_doc,
             open_settings,
             places,

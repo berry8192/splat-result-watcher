@@ -151,12 +151,6 @@ export default function SettingsPage() {
     }
   };
 
-  const resetGame = async () => {
-    if (!window.confirm("現在の試合をイベントを送信せずに破棄し、待機に戻します。よろしいですか？")) return;
-    await invoke("reset_game");
-    setMsg({ bad: false, text: "現在の試合を破棄しました" });
-  };
-
   return (
     <div className="page settings-form">
       <Section id="display" title="表示ウィンドウ">
@@ -286,13 +280,6 @@ export default function SettingsPage() {
           <input type="checkbox" checked={form.hit_log} onChange={(e) => set("hit_log", e.target.checked)} /> 検出ログを保存する
           <span className="small">　デバッグ用。検出した画面と認識結果を hits\日付\ に保存します（上限 500MB）</span>
         </label>
-      </Section>
-
-      <Section id="trouble" title="トラブル時">
-        <button className="danger" onClick={resetGame}>
-          現在の試合を破棄して待機に戻す
-        </button>
-        <span className="small">　状態が進まなくなったときに使用します。イベントは送信せずに破棄します</span>
       </Section>
 
       <div className="save-bar">
