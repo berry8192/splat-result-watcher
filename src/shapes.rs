@@ -109,8 +109,38 @@ pub fn progress_mode(img: &RgbImage) -> Option<Mode> {
     }
 }
 
+/// 精算の画面のモード。チャレンジ・昇格戦は上に見出し（「挑戦終了!」など）と横一列の点線があり（点線のかたまり 10〜13）、
+/// オープンには無い（0）。点線が無ければオープン、あればチャレンジ、どちらとも言えなければ None
+pub fn udemae_mode(img: &RgbImage) -> Option<Mode> {
+    let s = |v: u32| v * img.width() / 1536;
+    let (x0, x1) = (s(430), s(1110));
+    let runs = (s(236)..=s(256))
+        .map(|y| {
+            let mut n = 0;
+            let mut prev = false;
+            for x in x0..x1 {
+                let [r, g, b] = img.get_pixel(x, y).0;
+                let (mx, mn) = (r.max(g).max(b), r.min(g).min(b));
+                let on = mn >= 110 && mx - mn < 25;
+                if on && !prev {
+                    n += 1;
+                }
+                prev = on;
+            }
+            n
+        })
+        .max()
+        .unwrap_or(0);
+    match runs {
+        6.. => Some(Mode::BankaraChallenge),
+        0..=1 => Some(Mode::BankaraOpen),
+        _ => None,
+    }
+}
+
+/// 精算のゲージ。真ん中の黒いパネルも要る（試合の始まりの「GO!」の白っぽいしぶきをゲージと見たことがある。本物のパネルは 0.94〜1.00、GO! は 0.00）
 pub fn udemae_gauge(img: &RgbImage) -> bool {
-    ratio(img, GAUGE, mid_gray) >= 0.6
+    ratio(img, GAUGE, mid_gray) >= 0.6 && result_panel(img)
 }
 
 pub fn x_splash(img: &RgbImage) -> bool {
@@ -631,7 +661,7 @@ mod measure {
             }
             let r = rec.recognize(&img);
             println!("  勝敗 {:?} メニューのウデマエ {}/{} 読み {:?}", outcome(&img), mu.text, mu.guess, r.seen);
-            println!("  札 {:.3} {:?}", ratio(&img, PROGRESS_TAG, tag_yellow), progress_mode(&img));
+            println!("  札 {:.3} {:?} 精算 {:?}", ratio(&img, PROGRESS_TAG, tag_yellow), progress_mode(&img), udemae_mode(&img));
             println!("  ナワバリ {} 途中 {}", turf_intro(&img), r.notes.iter().take(3).cloned().collect::<Vec<_>>().join(" / "));
         }
     }

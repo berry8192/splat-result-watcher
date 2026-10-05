@@ -109,7 +109,10 @@ pub enum Seen {
     /// 「計測完了!! 1830.4」
     Calibrated(f64),
     /// バンカラの精算。`value` はゲージの下の今のポイント、`total` は「TOTAL = n p」（読めたときだけ）
-    Udemae { value: i32, total: Option<i32> },
+    /// `mode` は見出しと点線の有無で分かるモード（オープンの精算には「挑戦終了!」などの見出しと点線が無い）
+    Udemae { value: i32, total: Option<i32>, mode: Option<Mode> },
+    /// 精算の画面だが、数字はまだ見本で読めない（モードの手がかりにだけ使う）
+    UdemaeScreen { mode: Option<Mode> },
     /// 昇格の画面「300p ウデマエポイントはリセットされます」
     UdemaeReset(i32),
     /// 試合と結び付かない、今見えた自分の値（`wins` / `losses` は進行が見えたときだけ）
@@ -311,6 +314,10 @@ impl Game {
 
     fn mode(&self) -> Option<Mode> {
         let m = self.header.map(|h| h.0).or(self.implied_mode).or(self.matching_mode)?;
+        // オープンの精算（見出しと点線が無い）を見たならオープン
+        if m == Mode::BankaraChallenge && self.implied_mode == Some(Mode::BankaraOpen) {
+            return Some(Mode::BankaraOpen);
+        }
         // 結果の帯（形で見たとき）・精算・進行では、バンカラのチャレンジとオープンを見分けられない。
         // 直前のマッチングで○が無ければオープン
         if m == Mode::BankaraChallenge && self.matching_mode == Some(Mode::BankaraOpen) {
@@ -592,11 +599,16 @@ impl Machine {
             }
         }
 
-        // 試合後の画面からモードが分かる
-        if let Some(g) = &mut self.game {
+        // 試合後の画面からモードが分かる（勝敗が出た後だけ。試合の始まりの「GO!」をゲージと見たことがある）
+        if let Some(g) = self.game.as_mut().filter(|g| g.has_end()) {
             match &seen {
                 Seen::XPower { .. } | Seen::Calibrating | Seen::Calibrated(_) => g.implied_mode = Some(Mode::X),
-                Seen::Udemae { .. } | Seen::UdemaeReset(_) => g.implied_mode = Some(Mode::BankaraChallenge),
+                Seen::Udemae { mode: Some(Mode::BankaraOpen), .. } | Seen::UdemaeScreen { mode: Some(Mode::BankaraOpen) } => {
+                    g.implied_mode = Some(Mode::BankaraOpen)
+                }
+                Seen::Udemae { .. } | Seen::UdemaeScreen { .. } | Seen::UdemaeReset(_) => {
+                    g.implied_mode = Some(Mode::BankaraChallenge)
+                }
                 // 結果の帯を飛ばして進行の画面に移ることがある（2026-10-06 の本番）。進行の札でモードが分かる
                 Seen::Progress { mode: Some(m), .. } if g.implied_mode.is_none() => g.implied_mode = Some(*m),
                 _ => {}
@@ -673,6 +685,13 @@ impl Machine {
         if g.outcome == Some(Outcome::Lose) && g.header.is_none() && g.implied_mode.is_none() && !last {
             return;
         }
+        // バンカラは、チャレンジかオープンかをマッチング（○の有無）か試合後の画面（進行の札・精算の見出し）で確かめてから出す。
+        // 結果の帯ではどちらか分からない（本番でオープンの勝ちをチャレンジとして出した。2026-10-06）。来ないまま閉じるならチャレンジ
+        // 無効試合は試合後の画面が出ないので待たない
+        let no_contest = note == Note::NoContest || g.no_contest;
+        if mode == Mode::BankaraChallenge && g.implied_mode.is_none() && g.matching_mode.is_none() && !no_contest && !last {
+            return;
+        }
         g.settled = true;
         if mode == Mode::Other {
             return;
@@ -729,7 +748,7 @@ impl Machine {
 
         // ウデマエポイント: 今のポイント＋TOTAL と合えばその場で出す
         let ud = match seen {
-            Seen::Udemae { value, total } => {
+            Seen::Udemae { value, total, .. } => {
                 if total.is_some() {
                     p.udemae_total = *total;
                 }
@@ -1040,7 +1059,7 @@ mod tests {
     fn udemae_and_calibration() {
         let mut r = Run::new();
         post_match(&mut r);
-        let ud = |v, t| Seen::Udemae { value: v, total: t };
+        let ud = |v, t| Seen::Udemae { value: v, total: t, mode: None };
         r.feed(ud(-15, None), 4).feed(ud(-15, Some(380)), 2).feed(ud(120, Some(380)), 1).feed(ud(365, Some(380)), 3);
         let p = r.of("power");
         assert_eq!(p.len(), 1, "TOTAL と合った時点で出す");
@@ -1148,7 +1167,7 @@ mod tests {
         assert_eq!(order(&r), ["result", "power"]);
         // (c) バンカラの精算でモードを補う
         let mut r = Run::new();
-        let ud = |v, t| Seen::Udemae { value: v, total: t };
+        let ud = |v, t| Seen::Udemae { value: v, total: t, mode: None };
         r.intro(Rule::Asari).feed(Seen::Outcome(Outcome::Lose), 6).wait(20).feed(ud(-15, Some(380)), 4).feed(ud(365, Some(380)), 4);
         assert_eq!(order(&r), ["result", "power"]);
     }
@@ -1163,6 +1182,16 @@ mod tests {
         assert_eq!((res["mode"].as_str(), res["outcome"].as_str()), (Some("bankara_challenge"), Some("lose")));
         let pr = r.events.iter().find(|e| e["type"] == "set_progress").expect("進行も流れる");
         assert_eq!((pr["wins"].as_u64(), pr["losses"].as_u64()), (Some(1), Some(2)));
+    }
+
+    #[test]
+    fn bankara_open_is_decided_by_the_udemae_screen_without_a_title() {
+        let mut r = Run::new();
+        r.intro(Rule::Area).feed(win(), 6).feed(header(Mode::BankaraChallenge, Rule::Area, Note::None), 5).wait(5);
+        let open = |v| Seen::Udemae { value: v, total: Some(20), mode: Some(Mode::BankaraOpen) };
+        r.feed(open(277), 4).feed(open(297), 4).wait(60).intro(Rule::Area);
+        let res = r.events.iter().find(|e| e["type"] == "result").unwrap();
+        assert_eq!(res["mode"], "bankara_open");
     }
 
     #[test]

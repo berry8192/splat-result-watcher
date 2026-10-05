@@ -332,7 +332,7 @@ impl LabelLearner {
         let outcome = matches!(seen, Seen::Outcome(_));
         let x_power = matches!(seen, Seen::XPower { .. }) || shape("power_label").is_some();
         let x_power_read = matches!(seen, Seen::XPower { .. });
-        let udemae = matches!(seen, Seen::Udemae { .. });
+        let udemae = matches!(seen, Seen::Udemae { .. } | Seen::UdemaeScreen { .. });
         let header = match seen {
             Seen::Header { mode, .. } => Some(*mode),
             _ => None,
@@ -639,7 +639,7 @@ mod tests {
             l.feed(at + Duration::milliseconds(500 * i), &Seen::Header { mode: Mode::X, rule: None, note: crate::state::Note::None }, &[seen_shape("mode", "x", 1)], &t);
         }
         // X と見えた帯の後に、精算（バンカラ）の画面が出たら足さない
-        assert!(l.feed(at + Duration::seconds(30), &Seen::Udemae { value: 100, total: None }, &[], &t).is_empty());
+        assert!(l.feed(at + Duration::seconds(30), &Seen::Udemae { value: 100, total: None, mode: None }, &[], &t).is_empty());
     }
 
     #[test]

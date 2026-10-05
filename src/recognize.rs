@@ -416,10 +416,11 @@ impl Recognizer {
             // TOTAL は、ゲージの数字が読めなくても読む（読めない字を計算で埋めるのに使う）
             let t = self.read_glyphs(work, p("udemae_total"));
             notes.number(p("udemae_total"), "TOTAL", &t);
+            let mode = shapes::udemae_mode(work);
             if let Some(value) = parse_points(&n.text) {
-                return Seen::Udemae { value, total: parse_points(&t.text) };
+                return Seen::Udemae { value, total: parse_points(&t.text), mode };
             }
-            return Seen::Unknown;
+            return Seen::UdemaeScreen { mode };
         }
 
         // ロビーのメニューに出ている自分の値（observed）
@@ -626,9 +627,10 @@ mod with_samples {
         assert_eq!(see("132222"), Seen::RuleIntro(Rule::Yagura));
         // バンカラの精算: 見本にしなかった 155（130・685・-15・365 の見本から）と、TOTAL（大きな数字の見本）
         let why = |key: &str| r.recognize(&load(key)).notes.join(" / ");
-        assert_eq!(see("040535"), Seen::Udemae { value: 155, total: Some(25) }, "{}", why("040535"));
-        assert_eq!(see("040526"), Seen::Udemae { value: 130, total: Some(25) }, "{}", why("040526"));
-        assert_eq!(see("040905"), Seen::Udemae { value: 365, total: Some(380) }, "{}", why("040905"));
+        let ch = Some(Mode::BankaraChallenge);
+        assert_eq!(see("040535"), Seen::Udemae { value: 155, total: Some(25), mode: ch }, "{}", why("040535"));
+        assert_eq!(see("040526"), Seen::Udemae { value: 130, total: Some(25), mode: ch }, "{}", why("040526"));
+        assert_eq!(see("040905"), Seen::Udemae { value: 365, total: Some(380), mode: ch }, "{}", why("040905"));
         assert_eq!(see("041716"), Seen::UdemaeReset(300), "{}", why("041716"));
         let mm = |s: Seen| match s {
             Seen::MatchingValue { mode, .. } => Seen::Matching(mode),
