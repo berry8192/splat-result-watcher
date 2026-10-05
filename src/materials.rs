@@ -217,7 +217,7 @@ mod tests {
         assert!(!menu.ready);
         // 手で取る必要があるのは、昇格と進行だけ（ほかは見本が無くても読めるか、自動でそろう）
         let manual: Vec<&str> = st.iter().filter(|s| s.needs_manual).map(|s| s.name).collect();
-        assert_eq!(manual, ["昇格", "進行（WIN LOSE）"]);
+        assert_eq!(manual, ["昇格", "セット進行（WIN LOSE）"]);
         // 増減の数字には「+」も入る
         let x = st.iter().find(|s| s.name == "X パワーの変動").unwrap();
         assert!(x.items.iter().any(|i| i.pool == "digit_small" && i.name == "+"));
