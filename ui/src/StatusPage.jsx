@@ -122,8 +122,10 @@ export default function StatusPage() {
           </ul>
         </div>
       </div>
-      <h3>ログ</h3>
-      <pre className="log">{s.log.join("\n")}</pre>
+      <details className="sec">
+        <summary>ログ</summary>
+        <pre className="log">{s.log.join("\n")}</pre>
+      </details>
     </div>
   );
 }

@@ -148,11 +148,14 @@ export default function TemplatesPage() {
 
   return (
     <div className="page templates">
-      <p className="small">
+      <details className="sec">
+        <summary>使い方</summary>
+        <p className="small">
         テンプレートはご自身の画面から登録します（ゲーム画面の画像は配布物に含めないため）。プレイ後に「最近のフレームから選ぶ」で遡り、
         数字や勝敗が表示されたフレームを選択してください（認識できたフレームには下の目印から移動できます）。「現在のフレーム」や、
         snap・record で保存したゲーム画面の画像も使用できます。枠をクリックすると、その領域を切り抜きます。
-      </p>
+        </p>
+      </details>
       <div className="toolbar">
         <button onClick={holdRecent}>最近のフレームから選ぶ</button>
         <button onClick={useLive}>現在のフレームを使う</button>

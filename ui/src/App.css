@@ -377,6 +377,36 @@ body.display-window #root {
   margin: 8px 0;
 }
 
+/* 折りたたみの区切り（設定・状態・テンプレートの登録） */
+.sec {
+  border-bottom: 1px solid #26262f;
+}
+.sec > summary {
+  cursor: pointer;
+  padding: 10px 4px;
+  font-size: 14px;
+  color: var(--dim);
+  list-style: none;
+}
+.sec > summary::-webkit-details-marker {
+  display: none;
+}
+.sec > summary::before {
+  content: "▸ ";
+}
+.sec[open] > summary {
+  color: var(--text);
+}
+.sec[open] > summary::before {
+  content: "▾ ";
+}
+.sec-body {
+  padding: 0 4px 12px 20px;
+}
+.save-bar {
+  padding: 14px 4px;
+}
+
 .settings-form input[type="number"] {
   width: 110px;
   margin-left: 8px;
