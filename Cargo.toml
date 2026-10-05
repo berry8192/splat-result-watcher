@@ -26,6 +26,9 @@ axum = { version = "0.8", features = ["ws"] }
 # （custom-protocol: `cargo tauri` を通さずに cargo だけで組んでも ui/dist を使う）
 tauri = { version = "2", features = ["custom-protocol"] }
 base64 = "0.22"
+# OBS Studio の obs-websocket（src/obs.rs）
+tungstenite = "0.28"
+sha2 = "0.10"
 # ルール紹介の文字を Windows のゴシック体で書いて比べる（shapes.rs。フォントは同梱しない）
 ab_glyph = "0.2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

@@ -64,6 +64,17 @@
   撮り、相手の窓は触らない。`createProjector` は `null` を返して窓を教えてくれず、タイトルも同じなので、
   **開く前と後で「全画面表示」の窓を列挙し、増えた 1 枚を自分のものとして控える**
 
+### OBS Studio のとき
+OBS には obs-websocket（v5。OBS 28 から同梱）があるので、窓を作らずに済む（`src/obs.rs`）。
+1. 利用者は OBS の「ツール → WebSocket サーバー設定」で有効にし、番号（既定 4455）とパスワードを認識アプリの設定に入れる
+2. `ws://127.0.0.1:4455` につなぎ、`Hello` の `authentication`（`salt`・`challenge`）があれば
+   `base64(sha256(base64(sha256(password + salt)) + challenge))` で `Identify`（`eventSubscriptions: 0`）
+3. 0.5 秒ごとに `GetCurrentProgramScene` → `GetSourceScreenshot`（そのシーン名、`png`、`imageWidth`×`imageHeight` は撮る幅×16:9）。
+   合成済みのプログラム出力が base64 の data URI で返る。OBS はキャンバスをその大きさに縮めるので、キャンバスは 16:9 にしておく
+4. ゲーム穴の位置の約束（左詰め・16:9・上下の帯）は N Air のときと同じ
+
+認識アプリの設定「撮る配信ソフト」が auto なら N Air を先に試し、無ければ OBS につなぐ（2026-10-06 から）。
+
 ## つなぎ方
 - 認識アプリが WebSocket のサーバ、使う側がクライアント。既定は `ws://127.0.0.1:3140/events`
 - クライアントは `?after=<最後に受けた seq>` を付けてつなぐ。サーバは次の順で送る:

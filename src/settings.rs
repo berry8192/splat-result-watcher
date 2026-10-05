@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::data_dir;
 use crate::engine::EngineConfig;
+use crate::source::{CaptureConfig, CaptureFrom};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -23,15 +24,33 @@ pub struct Settings {
     pub record_cap_gb: f64,
     /// デバッグ用に、何かに当たったフレームの読みと画面を残す（hits\日付\。上限 500MB）
     pub hit_log: bool,
+    /// どの配信ソフトから撮るか（auto: N Air が起きていればそれ、無ければ OBS）
+    pub capture_from: CaptureFrom,
+    /// OBS の obs-websocket の番号とパスワード（OBS の「ツール → WebSocket サーバー設定」）
+    pub obs_port: u16,
+    pub obs_password: String,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { port: 3140, width: 1280, record: false, record_cap_gb: 20.0, hit_log: true }
+        Settings {
+            port: 3140,
+            width: 1280,
+            record: false,
+            record_cap_gb: 20.0,
+            hit_log: true,
+            capture_from: CaptureFrom::Auto,
+            obs_port: crate::obs::DEFAULT_PORT,
+            obs_password: String::new(),
+        }
     }
 }
 
 impl Settings {
+    pub fn capture_config(&self) -> CaptureConfig {
+        CaptureConfig { from: self.capture_from, obs_port: self.obs_port, obs_password: self.obs_password.clone() }
+    }
+
     pub fn path() -> PathBuf {
         data_dir().join("settings.json")
     }
@@ -76,6 +95,7 @@ impl Settings {
             record: self.record,
             record_cap_bytes: (self.record_cap_gb * 1024.0 * 1024.0 * 1024.0) as u64,
             hits_dir: self.hit_log.then(|| data_dir().join("hits")),
+            capture: self.capture_config(),
             ..EngineConfig::default()
         }
     }

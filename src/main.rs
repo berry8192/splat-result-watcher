@@ -29,10 +29,12 @@ use chrono::Local;
 use windows::core::BOOL;
 use windows::Win32::System::Console::SetConsoleCtrlHandler;
 
-use splat_result_watcher::nair::{self, Projector};
+use splat_result_watcher::nair;
+use splat_result_watcher::settings::Settings;
+use splat_result_watcher::source::Source;
 use splat_result_watcher::recorder::{Recorder, RecorderConfig};
 use splat_result_watcher::{
-    layout, open_projector, samples_dir, INTERVAL, NO_SIGNAL_DARK, SLOW_CAPTURE_MS, SLOW_INTERVAL,
+    layout, samples_dir, INTERVAL, NO_SIGNAL_DARK, SLOW_CAPTURE_MS, SLOW_INTERVAL,
 };
 
 pub(crate) static STOP: AtomicBool = AtomicBool::new(false);
@@ -78,7 +80,8 @@ fn shot(args: &[String]) -> Result<()> {
         }
     }
     nair::init_dpi();
-    let projector = open_projector(width)?;
+    let mut projector = Source::open(width, &Settings::load().0.capture_config())?;
+    println!("{} から撮る", projector.name());
     // 開いた直後は描画が間に合わず黒いことがある
     std::thread::sleep(Duration::from_millis(500));
 
@@ -138,7 +141,7 @@ fn snap(args: &[String]) -> Result<()> {
     }
 
     nair::init_dpi();
-    let projector = open_projector(width)?;
+    let mut projector = Source::open(width, &Settings::load().0.capture_config())?;
     // 開いた直後は描画が間に合わず黒いことがある
     std::thread::sleep(Duration::from_millis(500));
     let at = Local::now();
@@ -236,7 +239,8 @@ fn record(args: &[String]) -> Result<()> {
     let recorder = Recorder::start(cfg)?;
     println!("今回のフォルダ: {}", recorder.session_dir.display());
 
-    let mut projector: Option<Projector> = None;
+    let capture_cfg = Settings::load().0.capture_config();
+    let mut projector: Option<Source> = None;
     let mut last_open_try: Option<Instant> = None;
     let mut interval = INTERVAL;
     let mut stats = Stats::default();
@@ -254,16 +258,16 @@ fn record(args: &[String]) -> Result<()> {
         }
 
         if projector.as_ref().is_some_and(|p| !p.alive()) {
-            println!("プロジェクターが消えた。開き直す");
+            println!("撮る口が消えた。開き直す");
             projector = None;
         }
-        let Some(p) = projector.as_ref() else {
+        let Some(p) = projector.as_mut() else {
             // 開けないときは 5 秒おきに試す
             if last_open_try.is_none_or(|t| t.elapsed() >= Duration::from_secs(5)) {
                 last_open_try = Some(Instant::now());
-                match open_projector(width) {
+                match Source::open(width, &capture_cfg) {
                     Ok(p) => {
-                        println!("プロジェクターを開いた");
+                        println!("{} から撮る", p.name());
                         projector = Some(p);
                         next = Instant::now() + Duration::from_millis(500);
                     }

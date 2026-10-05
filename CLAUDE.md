@@ -1,6 +1,6 @@
 # CLAUDE.md - splat-result-watcher
 
-スプラトゥーン3 の配信映像（N Air の出力）からリザルト画面を読み、勝敗・X パワー・ウデマエポイントを
+スプラトゥーン3 の配信映像（N Air か OBS Studio の出力）からリザルト画面を読み、勝敗・X パワー・ウデマエポイントを
 WebSocket（既定 `ws://127.0.0.1:3140/events`）で流す単独アプリ。受け手の 1 つが `../nicomment`。
 
 - 約束事: [docs/protocol.md](docs/protocol.md)（正本。受け手に影響する変更は nicomment に知らせる。「N Air の出力の撮り方」の節は nicomment も参照している）
@@ -16,7 +16,7 @@ WebSocket（既定 `ws://127.0.0.1:3140/events`）で流す単独アプリ。受
 - デバッグ用の当たりの記録: `%LOCALAPPDATA%\splat-result-watcher\hits\YYYYMMDD\hits.jsonl`（1 行 1 件の JSON。何かに当たったフレームのうち中身が変わったものだけ。
   `seen`・`shapes`（形と色で見分けた見出し）・`numbers`（`text` は見本で読めた字、`guess` は推測）・`peaks`・`learned`・`events`・`image`）と、
   同じフォルダの `image` の JPEG（ゲーム穴）。上限 500MB で古い日から消す。設定の「当たりの記録を残す」で切れる（`src/hitlog.rs`）
-- `target/release/splat-result-watcher.exe shot [out.png] [--width 1920]` … 1 枚撮って時間を測る（N Air が起きていること）
+- `target/release/splat-result-watcher.exe shot [out.png] [--width 1920]` … 1 枚撮って時間を測る（N Air か OBS が起きていること。どちらから撮るかは設定 `capture_from`、OBS は `obs_port` / `obs_password`。`src/source.rs`）
 - `target/release/splat-result-watcher.exe snap <説明…> [--full]` … 1 枚撮ってゲーム穴を PNG で残す（`samples/snaps/`、説明は `index.tsv` にも）
 - `target/release/splat-result-watcher.exe record [--dir D] [--width 1280] [--cap-gb 20] [--full]` … 見本の録画（ゲーム穴だけ）。Ctrl+C で止める
 - `target/release/splat-result-watcher.exe serve [--record]` … 撮って読み、`ws://127.0.0.1:3140/events` で流す（照合には GUI で登録した見本を使う）。`--record` で見本の録画も一緒に回す。出来事の控えは `%LOCALAPPDATA%\splat-result-watcher\events.jsonl`

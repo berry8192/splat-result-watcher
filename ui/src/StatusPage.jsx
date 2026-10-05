@@ -91,7 +91,7 @@ export default function StatusPage() {
               <tr>
                 <th>撮影</th>
                 <td>
-                  {s.projector ? "プロジェクターあり" : "プロジェクターなし"}・平均 {s.capture_ms.toFixed(1)}ms・
+                  {s.source ? `${s.source} から撮れている` : "撮れていない（N Air か OBS を起動する）"}・平均 {s.capture_ms.toFixed(1)}ms・
                   {s.interval_ms}ms ごと
                 </td>
               </tr>

@@ -26,12 +26,14 @@ export default function SettingsPage() {
 
   const set = (k, v) => setForm({ ...form, [k]: v });
   const needsRestart = saved && (form.port !== saved.port || form.width !== saved.width);
+  const obsChanged =
+    saved && (form.capture_from !== saved.capture_from || form.obs_port !== saved.obs_port || form.obs_password !== saved.obs_password);
 
   const save = async () => {
     try {
       await invoke("save_settings", { settings: form });
       setSaved(form);
-      setMsg({ bad: false, text: needsRestart ? "残した。番号と撮る幅は起動し直すと効く" : "残した" });
+      setMsg({ bad: false, text: needsRestart || obsChanged ? "残した。番号・撮る幅・撮る配信ソフトは起動し直すと効く" : "残した" });
     } catch (e) {
       setMsg({ bad: true, text: String(e) });
     }
@@ -65,7 +67,25 @@ export default function SettingsPage() {
           <input type="number" value={form.port} onChange={(e) => set("port", Number(e.target.value))} />
         </label>
         <label>
-          N Air の出力を撮る幅
+          撮る配信ソフト
+          <select value={form.capture_from} onChange={(e) => set("capture_from", e.target.value)}>
+            <option value="auto">自動（N Air が起きていればそれ、無ければ OBS）</option>
+            <option value="n_air">N Air</option>
+            <option value="obs">OBS Studio</option>
+          </select>
+        </label>
+        <label>
+          OBS の WebSocket の番号
+          <input type="number" value={form.obs_port} onChange={(e) => set("obs_port", Number(e.target.value))} />
+          <span className="small">　OBS の「ツール → WebSocket サーバー設定」で有効にする（既定 4455）</span>
+        </label>
+        <label>
+          OBS の WebSocket のパスワード
+          <input type="password" value={form.obs_password} onChange={(e) => set("obs_password", e.target.value)} />
+          <span className="small">　OBS 側で「認証を有効にする」を切っていれば空でよい</span>
+        </label>
+        <label>
+          配信の出力を撮る幅
           <input type="number" value={form.width} onChange={(e) => set("width", Number(e.target.value))} />
           <span className="small">　1280 を勧める（ゲーム穴が照合の大きさにちょうどなる。1920 だと撮影が重い）</span>
         </label>

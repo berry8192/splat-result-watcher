@@ -3088,10 +3088,12 @@ dependencies = [
  "image",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tokio",
  "tokio-tungstenite 0.28.0",
+ "tungstenite 0.28.0",
  "windows",
 ]
 

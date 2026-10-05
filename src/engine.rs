@@ -20,13 +20,13 @@ use serde_json::Value;
 
 use crate::hitlog::HitLog;
 use crate::learn::{LabelLearner, Learner};
-use crate::nair::Projector;
+use crate::source::{CaptureConfig, Source};
 use crate::recognize::Recognizer;
 use crate::recorder::{Recorder, RecorderConfig};
 use crate::server::Server;
 use crate::state::{Config, Machine, Seen};
 use crate::templates::Templates;
-use crate::{data_dir, layout, nair, open_projector, samples_dir, INTERVAL, SLOW_CAPTURE_MS, SLOW_INTERVAL};
+use crate::{data_dir, layout, nair, samples_dir, INTERVAL, SLOW_CAPTURE_MS, SLOW_INTERVAL};
 
 /// 控えておく出来事・記録の行の数
 const KEEP_EVENTS: usize = 50;
@@ -53,6 +53,8 @@ pub struct EngineConfig {
     pub addr: SocketAddr,
     /// 出力を撮る幅（1280 ならゲーム穴が照合の大きさ 1024×576 にちょうどなる）
     pub width: u32,
+    /// どの配信ソフトから撮るか（N Air か OBS）
+    pub capture: CaptureConfig,
     /// 見本の録画も回す
     pub record: bool,
     /// 見本の録画の上限（バイト）
@@ -70,6 +72,7 @@ impl Default for EngineConfig {
         EngineConfig {
             addr: crate::server::DEFAULT_ADDR.parse().unwrap(),
             width: 1280,
+            capture: CaptureConfig::default(),
             record: false,
             record_cap_bytes: 20 * 1024 * 1024 * 1024,
             events_path: data_dir().join("events.jsonl"),
@@ -85,6 +88,8 @@ impl Default for EngineConfig {
 pub struct Snapshot {
     pub stage: String,
     pub projector: bool,
+    /// 撮れている配信ソフト（"N Air" / "OBS"）。撮れていなければ None
+    pub source: Option<String>,
     /// 直近 1 分の撮影の平均（ms）
     pub capture_ms: f64,
     pub interval_ms: u64,
@@ -302,7 +307,7 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
     let mut learner = Learner::default();
     let mut label_learner = LabelLearner::default();
     let mut hits = cfg.hits_dir.clone().map(HitLog::new);
-    let mut projector: Option<Projector> = None;
+    let mut projector: Option<Source> = None;
     let mut recorder: Option<Recorder> = None;
     let mut last_open_try: Option<Instant> = None;
     let mut interval = INTERVAL;
@@ -354,16 +359,16 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
         }
 
         if projector.as_ref().is_some_and(|p| !p.alive()) {
-            s.log("プロジェクターが消えた。開き直す".into());
+            s.log("撮る口が消えた。開き直す".into());
             projector = None;
         }
         if projector.is_none() && last_open_try.is_none_or(|t| t.elapsed() >= Duration::from_secs(5)) {
             // 開くのに十数秒かかって失敗することがある。5 秒は試し終わってから数える（その間に映像なしを流す）
-            let opened = open_projector(width);
+            let opened = Source::open(width, &cfg.capture);
             last_open_try = Some(Instant::now());
             match opened {
                 Ok(p) => {
-                    s.log("プロジェクターを開いた".into());
+                    s.log(format!("{} から撮る", p.name()));
                     projector = Some(p);
                     next = Instant::now() + Duration::from_millis(500);
                     continue;
@@ -385,7 +390,7 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
         let t = Instant::now();
         // 当たりの記録に付ける画面（このフレームで読んだときだけ）
         let mut frame_img: Option<RgbImage> = None;
-        let reading = match projector.as_ref().map(|p| p.capture()) {
+        let reading = match projector.as_mut().map(|p| p.capture()) {
             Some(Ok(img)) if !read_now => {
                 let game = layout::crop_game(&img);
                 if !in_battle && nair::dark_ratio(&game) <= crate::NO_SIGNAL_DARK {
@@ -514,6 +519,7 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
         let mut snap = s.snap.lock().unwrap();
         snap.stage = st.to_string();
         snap.projector = projector.is_some();
+        snap.source = projector.as_ref().map(|p| p.name().to_string());
         snap.interval_ms = interval.as_millis() as u64;
         if snap.capture_ms == 0.0 && !times.is_empty() {
             snap.capture_ms = times.iter().sum::<f64>() / times.len() as f64;
