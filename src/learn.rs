@@ -18,8 +18,8 @@ use std::collections::HashMap;
 use chrono::{DateTime, Duration, Utc};
 
 use crate::matching::{self, Glyph, Patch};
-use crate::recognize::{parse_delta, parse_points, parse_power, GlyphRead};
-use crate::state::Seen;
+use crate::recognize::{parse_delta, parse_points, parse_power, GlyphRead, ShapeLabel};
+use crate::state::{Mode, Seen};
 use crate::templates::{self, glyph_char, glyph_label, is_auto, Pool, Templates};
 
 /// 何回続けて同じ読みなら落ち着いたとみなすか
@@ -271,6 +271,121 @@ fn fill(place_id: &str, read: &GlyphRead, expected: &str, why: &str, how: Verifi
     out
 }
 
+// ---- 見出しの見本（形と色で見分けたものを、別の画面で確かめてから足す） ----
+
+/// 確かめるまでの待ち（これを過ぎたら捨てる）
+fn confirm_within(place: &str) -> Duration {
+    match place {
+        "rule_intro" | "matching" => Duration::minutes(15),
+        "power_label" | "menu_x_label" | "menu_udemae_label" => Duration::seconds(60),
+        _ => Duration::minutes(3),
+    }
+}
+
+/// 見出しの見本は、ラベルごとにこれだけ自動で足す
+const MAX_AUTO_LABEL: usize = 2;
+/// 足そうとする切り出しが、別のラベルの見本にこれ以上似ていたら足さない
+const LABEL_CONFLICT: f64 = 0.6;
+
+#[derive(Clone, Debug)]
+struct PendingLabel {
+    place: &'static str,
+    label: &'static str,
+    patch: Patch,
+    at: DateTime<Utc>,
+}
+
+/// 形と色で見分けた見出しを、後から別の画面で確かめられたら見本にする。
+/// 確かめ方（どれも、見本でも形でもよい）:
+/// - ルール紹介 → 15 分以内に勝敗の画面（本当に試合だった）
+/// - 勝敗 → 3 分以内に結果の帯・X パワー・精算（本当に結果発表だった）
+/// - 結果の帯のモード → 3 分以内に、X なら X パワーの画面、バンカラなら精算の画面
+/// - マッチングのモード → 15 分以内に、同じモードの結果の帯
+/// - 「Xパワー」の見出し・メニューの見出し → 60 秒以内に、その数字が見本で読めた（計算で確かめた数字の見本ができた後）
+#[derive(Default)]
+pub struct LabelLearner {
+    run: HashMap<&'static str, (&'static str, u32)>,
+    pending: Vec<PendingLabel>,
+}
+
+impl LabelLearner {
+    pub fn feed(&mut self, at: DateTime<Utc>, seen: &Seen, shapes: &[ShapeLabel], t: &Templates) -> Vec<Learned> {
+        // 3 回続けて同じものに見えたら、確かめ待ちにする
+        let now: Vec<&'static str> = shapes.iter().map(|s| s.place).collect();
+        self.run.retain(|place, _| now.contains(place));
+        for s in shapes {
+            let e = self.run.entry(s.place).or_insert((s.label, 0));
+            if e.0 != s.label {
+                *e = (s.label, 0);
+            }
+            e.1 += 1;
+            if e.1 == STABLE && !self.pending.iter().any(|p| p.place == s.place && p.label == s.label) {
+                self.pending.push(PendingLabel { place: s.place, label: s.label, patch: s.patch.clone(), at });
+            }
+        }
+
+        // このフレームで分かったこと（見本でも形でも）
+        let shape = |place: &str| shapes.iter().find(|s| s.place == place).map(|s| s.label);
+        let outcome = matches!(seen, Seen::Outcome(_));
+        let x_power = matches!(seen, Seen::XPower { .. }) || shape("power_label").is_some();
+        let x_power_read = matches!(seen, Seen::XPower { .. });
+        let udemae = matches!(seen, Seen::Udemae { .. });
+        let header = match seen {
+            Seen::Header { mode, .. } => Some(*mode),
+            _ => None,
+        };
+        let observed_x = matches!(seen, Seen::Observed { what: crate::state::Observed::X { .. }, .. });
+        let observed_udemae = matches!(seen, Seen::Observed { what: crate::state::Observed::Udemae { .. }, .. });
+
+        let mut out = Vec::new();
+        let mut keep = Vec::new();
+        for p in std::mem::take(&mut self.pending) {
+            if at - p.at > confirm_within(p.place) {
+                continue;
+            }
+            let confirmed = match p.place {
+                "rule_intro" => outcome.then_some("その後に勝敗の画面が出た"),
+                "outcome" => (header.is_some() || x_power || udemae).then_some("その後に結果の帯か X パワー・精算の画面が出た"),
+                "mode" => match (p.label, header.is_none()) {
+                    ("x", true) if x_power => Some("その後に X パワーの画面が出た"),
+                    ("bankara_challenge", true) if udemae => Some("その後に精算の画面が出た"),
+                    _ => None,
+                },
+                "matching" => match (p.label, header) {
+                    ("x", Some(Mode::X)) => Some("その後の結果の帯も X"),
+                    ("bankara", Some(m)) if m != Mode::X => Some("その後の結果の帯もバンカラ"),
+                    _ => None,
+                },
+                "power_label" => x_power_read.then_some("その画面の X パワーが見本で読めた"),
+                "menu_x_label" => observed_x.then_some("そのメニューの X パワーが見本で読めた"),
+                "menu_udemae_label" => observed_udemae.then_some("そのメニューのウデマエが見本で読めた"),
+                _ => None,
+            };
+            match confirmed {
+                Some(why) => out.extend(label_to_add(&p, why, t)),
+                None => keep.push(p),
+            }
+        }
+        self.pending = keep;
+        out
+    }
+}
+
+fn label_to_add(p: &PendingLabel, why: &str, t: &Templates) -> Option<Learned> {
+    let place = templates::place(p.place)?;
+    let list = t.get(place.pool);
+    if list.iter().filter(|tm| tm.label == p.label && is_auto(&tm.id)).count() >= MAX_AUTO_LABEL {
+        return None;
+    }
+    if p.patch.px.iter().all(|&v| v == 0) {
+        return None;
+    }
+    if list.iter().any(|tm| tm.label != p.label && matching::glyph_iou(&tm.patch, &p.patch) >= LABEL_CONFLICT) {
+        return None;
+    }
+    Some(Learned { pool: place.pool, label: p.label.to_string(), patch: p.patch.clone(), why: format!("形で見分けた {} の {}。{why}", p.place, p.label) })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,6 +576,61 @@ mod tests {
         assert!(r.got.is_empty());
     }
 
+    fn seen_shape(place: &'static str, label: &'static str, n: u8) -> ShapeLabel {
+        let mut px = vec![0u8; 100];
+        px[n as usize] = 1;
+        ShapeLabel { place, label, patch: Patch { w: 10, h: 10, px } }
+    }
+
+    #[test]
+    fn a_shape_label_is_added_only_after_it_is_confirmed() {
+        let mut l = LabelLearner::default();
+        let t = Templates::default();
+        let mut at = Run::new().at;
+        let mut feed = |l: &mut LabelLearner, seen: Seen, s: &[ShapeLabel], n: u32| {
+            let mut got = Vec::new();
+            for _ in 0..n {
+                got.extend(l.feed(at, &seen, s, &t));
+                at += Duration::milliseconds(500);
+            }
+            got
+        };
+        // ルール紹介を 3 回続けて見ても、まだ足さない
+        assert!(feed(&mut l, Seen::RuleIntro(Rule::Area), &[seen_shape("rule_intro", "area", 1)], 6).is_empty());
+        // 試合中・その後の勝敗の画面で確かめられて、はじめて足す
+        assert!(feed(&mut l, Seen::Unknown, &[], 20).is_empty());
+        let got = feed(&mut l, Seen::Outcome(crate::state::Outcome::Win), &[seen_shape("outcome", "win", 2)], 4);
+        assert_eq!(got.iter().map(|g| g.label.as_str()).collect::<Vec<_>>(), ["area"]);
+        // 勝敗は、その後に X パワーの画面が出て確かめられる
+        let got = feed(&mut l, Seen::Unknown, &[seen_shape("power_label", "x_power", 3)], 1);
+        assert_eq!(got.iter().map(|g| g.label.as_str()).collect::<Vec<_>>(), ["win"]);
+    }
+
+    #[test]
+    fn a_shape_label_not_confirmed_in_time_is_dropped() {
+        let mut l = LabelLearner::default();
+        let t = Templates::default();
+        let at = Run::new().at;
+        for i in 0..4 {
+            l.feed(at + Duration::milliseconds(500 * i), &Seen::Header { mode: Mode::X, rule: None, note: crate::state::Note::None }, &[seen_shape("mode", "x", 1)], &t);
+        }
+        // 3 分を過ぎてから X パワーの画面が出ても、別の試合かもしれないので足さない
+        let got = l.feed(at + Duration::minutes(4), &Seen::Unknown, &[seen_shape("power_label", "x_power", 3)], &t);
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn a_header_mode_needs_the_matching_power_screen() {
+        let mut l = LabelLearner::default();
+        let t = Templates::default();
+        let at = Run::new().at;
+        for i in 0..4 {
+            l.feed(at + Duration::milliseconds(500 * i), &Seen::Header { mode: Mode::X, rule: None, note: crate::state::Note::None }, &[seen_shape("mode", "x", 1)], &t);
+        }
+        // X と見えた帯の後に、精算（バンカラ）の画面が出たら足さない
+        assert!(l.feed(at + Duration::seconds(30), &Seen::Udemae { value: 100, total: None }, &[], &t).is_empty());
+    }
+
     #[test]
     fn a_glyph_like_another_digit_is_not_added() {
         let dir = std::env::temp_dir().join(format!("srw-learn-{}", std::process::id()));
@@ -529,6 +699,55 @@ mod with_samples {
                     }
                 }
             }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// 見本 0 個から、手元の見本（samples/snaps）を時刻の順に 2 秒ずつ見せる。何が読めて、何が足されるか
+/// （`cargo test --release -- --ignored from_nothing --nocapture`）
+#[cfg(test)]
+mod from_nothing {
+    use super::*;
+    use crate::recognize::Recognizer;
+
+    #[test]
+    #[ignore]
+    fn from_nothing() {
+        let dir = std::env::temp_dir().join(format!("srw-nothing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut rec = Recognizer::new(Templates::load(&dir).unwrap());
+        let mut l = Learner::default();
+        let mut ll = LabelLearner::default();
+        let mut at = DateTime::parse_from_rfc3339("2026-10-03T12:00:00Z").unwrap().with_timezone(&Utc);
+        let snaps = crate::samples_dir().join("snaps");
+        let mut files: Vec<_> = std::fs::read_dir(&snaps)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|e| e == "png") && !p.to_string_lossy().ends_with("_ほこ.png"))
+            .filter(|p| !p.to_string_lossy().contains("052227")) // ほかの人の配信
+            .collect();
+        files.sort();
+        for p in files {
+            let img = image::open(&p).unwrap().to_rgb8();
+            let name: String = p.file_stem().unwrap().to_string_lossy().replace("20261003-", "").chars().take(24).collect();
+            let mut last = String::new();
+            for _ in 0..4 {
+                let r = rec.recognize(&img);
+                for g in ll.feed(at, &r.seen, &r.shape_labels, rec.templates()) {
+                    println!("    + {} {}（{}）", g.pool.dir_name(), g.label, g.why);
+                    rec.templates_mut().add_auto(g.pool, &g.label, g.patch).unwrap();
+                }
+                for g in l.feed(at, &r.seen, &r.numbers, rec.templates()) {
+                    println!("    + {} {}", g.pool.dir_name(), g.label);
+                    rec.templates_mut().add_auto(g.pool, &g.label, g.patch).unwrap();
+                }
+                at += Duration::milliseconds(500);
+                let shapes: Vec<String> = r.shape_labels.iter().map(|s| format!("{}={}", s.place, s.label)).collect();
+                last = format!("{:?} {}", r.seen, shapes.join(" "));
+            }
+            println!("{name:<26} {last}");
+            at += Duration::seconds(2);
         }
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -10,8 +10,9 @@
 use image::RgbImage;
 use serde::Serialize;
 
-use crate::matching::{self, Glyph, Roi};
+use crate::matching::{self, Glyph, Patch, Roi};
 use crate::nair;
+use crate::shapes;
 use crate::starter;
 use crate::state::{Mode, Note, Observed, Outcome, Rule, Seen};
 use crate::templates::{self, glyph_char, place, Place, Templates};
@@ -93,6 +94,14 @@ pub struct GlyphRead {
     pub glyphs: Vec<Glyph>,
 }
 
+/// 形と色で見分けた見出し（見本はまだ無い）。確かめられたら、この切り出しを見本にする
+#[derive(Clone, Debug)]
+pub struct ShapeLabel {
+    pub place: &'static str,
+    pub label: &'static str,
+    pub patch: Patch,
+}
+
 /// 1 フレームを読んだ結果。`notes` は GUI に見せる途中経過、`peaks` は記録に残す一致度
 /// （場所の短い名前, 一番近いラベルか読んだ数字, 一致度。数字は 1 文字ずつの一致度の一番低いもの）
 #[derive(Clone, Debug)]
@@ -102,11 +111,13 @@ pub struct Reading {
     pub peaks: Vec<(String, String, f64)>,
     /// 読んだ数字（場所の id, 読み）。読めない字が混じっていても入る（learn.rs が使う）
     pub numbers: Vec<(&'static str, GlyphRead)>,
+    /// 見本ではなく形と色で見分けた見出し
+    pub shape_labels: Vec<ShapeLabel>,
 }
 
 impl Reading {
     pub fn no_signal() -> Self {
-        Reading { seen: Seen::NoSignal, notes: Vec::new(), peaks: Vec::new(), numbers: Vec::new() }
+        Reading { seen: Seen::NoSignal, notes: Vec::new(), peaks: Vec::new(), numbers: Vec::new(), shape_labels: Vec::new() }
     }
 }
 
@@ -125,9 +136,16 @@ struct Notes {
     text: Vec<String>,
     peaks: Vec<(String, String, f64)>,
     numbers: Vec<(&'static str, GlyphRead)>,
+    shape_labels: Vec<ShapeLabel>,
 }
 
 impl Notes {
+    /// 見本ではなく形と色で見分けた（その場所の切り出しを、確かめられたら見本にする。learn.rs）
+    fn shape(&mut self, work: &RgbImage, place: &'static Place, label: &'static str) {
+        self.text.push(format!("形で見分けた: {} {label}", place.short));
+        self.shape_labels.push(ShapeLabel { place: place.id, label, patch: templates::cut(work, place) });
+    }
+
     fn number(&mut self, place: &Place, short: &str, r: &GlyphRead) {
         self.numbers.push((place.id, r.clone()));
         self.text.push(format!("{short}: {}", r.note()));
@@ -252,7 +270,7 @@ impl Recognizer {
         }
         let work = templates::to_work(game);
         let seen = self.recognize_work(&work, &mut notes);
-        Reading { seen, notes: notes.text, peaks: notes.peaks, numbers: notes.numbers }
+        Reading { seen, notes: notes.text, peaks: notes.peaks, numbers: notes.numbers, shape_labels: notes.shape_labels }
     }
 
     fn recognize_work(&self, work: &RgbImage, notes: &mut Notes) -> Seen {
@@ -264,72 +282,105 @@ impl Recognizer {
             "asari" => Some(Rule::Asari),
             _ => None,
         };
+        let mode_label = |m: Mode| if m == Mode::X { "x" } else { "bankara_challenge" };
 
         // 試合は必ずルール紹介から始まる
         if let Some(r) = self.decide(work, p("rule_intro"), RULE_INTRO_MIN, notes).and_then(rule) {
             return Seen::RuleIntro(r);
         }
-
-        if let Some(l) = self.decide(work, p("outcome"), OUTCOME_MIN, notes) {
-            match l.as_str() {
-                "win" => return Seen::Outcome(Outcome::Win),
-                "lose" => return Seen::Outcome(Outcome::Lose),
-                _ => {}
-            }
+        if let Some(r) = shapes::rule_intro(work) {
+            notes.shape(work, p("rule_intro"), r.as_str());
+            return Seen::RuleIntro(r);
         }
 
-        if let Some(l) = self.decide(work, p("mode"), MODE_MIN, notes) {
-            let mode = match l.as_str() {
+        let outcome = match self.decide(work, p("outcome"), OUTCOME_MIN, notes).as_deref() {
+            Some("win") => Some(Outcome::Win),
+            Some("lose") => Some(Outcome::Lose),
+            _ => shapes::outcome(work)
+                .inspect(|o| notes.shape(work, p("outcome"), if *o == Outcome::Win { "win" } else { "lose" })),
+        };
+        if let Some(o) = outcome {
+            return Seen::Outcome(o);
+        }
+
+        let header = match self.decide(work, p("mode"), MODE_MIN, notes) {
+            Some(l) => Some(match l.as_str() {
                 "x" => Mode::X,
                 "bankara_challenge" => Mode::BankaraChallenge,
                 "bankara_open" => Mode::BankaraOpen,
                 _ => Mode::Other,
-            };
+            }),
+            None => shapes::header_mode(work).inspect(|m| notes.shape(work, p("mode"), mode_label(*m))),
+        };
+        if let Some(mode) = header {
             let rule = self.decide(work, p("rule"), RULE_MIN, notes).and_then(rule);
             return Seen::Header { mode, rule, note: Note::None };
         }
 
-        if let Some(l) = self.decide(work, p("matching"), MATCHING_MIN, notes) {
+        let matching = match self.decide(work, p("matching"), MATCHING_MIN, notes) {
             // 「ウデマエ」ではチャレンジとオープンを見分けられない（オープンは当面対応しない）
-            return Seen::Matching(if l == "x" { Mode::X } else { Mode::BankaraChallenge });
+            Some(l) => Some(if l == "x" { Mode::X } else { Mode::BankaraChallenge }),
+            None => shapes::matching_mode(work)
+                .inspect(|m| notes.shape(work, p("matching"), if *m == Mode::X { "x" } else { "bankara" })),
+        };
+        if let Some(m) = matching {
+            return Seen::Matching(m);
         }
 
-        if let Some(l) = self.decide(work, p("udemae_title"), UDEMAE_TITLE_MIN, notes) {
-            if l == "promoted" {
-                let n = self.read_glyphs(work, p("udemae_reset"));
-                notes.number(p("udemae_reset"), "リセット", &n);
-                if let Some(v) = parse_points(&n.text) {
-                    return Seen::UdemaeReset(v);
-                }
-            } else {
-                let n = self.read_glyphs(work, p("udemae_value"));
-                notes.number(p("udemae_value"), "ウデマエ", &n);
-                // TOTAL は、ゲージの数字が読めなくても読む（読めない字を計算で埋めるのに使う）
-                let t = self.read_glyphs(work, p("udemae_total"));
-                notes.number(p("udemae_total"), "TOTAL", &t);
-                if let Some(value) = parse_points(&n.text) {
-                    return Seen::Udemae { value, total: parse_points(&t.text) };
-                }
+        // 精算の見出しが見本で決まらなくても、ゲージがあれば精算（昇格の画面は見出しの見本が要る）
+        let title = self.decide(work, p("udemae_title"), UDEMAE_TITLE_MIN, notes);
+        if title.as_deref() == Some("promoted") {
+            let n = self.read_glyphs(work, p("udemae_reset"));
+            notes.number(p("udemae_reset"), "リセット", &n);
+            if let Some(v) = parse_points(&n.text) {
+                return Seen::UdemaeReset(v);
             }
-        }
-
-        // ロビーのメニューに出ている自分の値（observed）
-        if self.decide(work, p("menu_x_label"), MENU_LABEL_MIN, notes).is_some() {
-            let n = self.read_glyphs(work, p("menu_x_value"));
-            notes.number(p("menu_x_value"), "メニューの X パワー", &n);
-            if let Some(value) = parse_power(&n.text) {
-                let wl = count_progress(work, &MENU_X_STRIP);
-                notes.text.push(format!("メニューの進行: {wl:?}"));
-                return Seen::Observed { what: Observed::X { rule: None, value }, wins: wl.map(|w| w.0), losses: wl.map(|w| w.1) };
+        } else if title.is_some() || shapes::udemae_gauge(work) {
+            if title.is_none() {
+                notes.text.push("形で見分けた: 精算のゲージ".into());
             }
-        }
-        if self.decide(work, p("menu_udemae_label"), MENU_LABEL_MIN, notes).is_some() {
-            let n = self.read_glyphs(work, p("menu_udemae_value"));
-            notes.number(p("menu_udemae_value"), "メニューのウデマエ", &n);
+            let n = self.read_glyphs(work, p("udemae_value"));
+            notes.number(p("udemae_value"), "ウデマエ", &n);
+            // TOTAL は、ゲージの数字が読めなくても読む（読めない字を計算で埋めるのに使う）
+            let t = self.read_glyphs(work, p("udemae_total"));
+            notes.number(p("udemae_total"), "TOTAL", &t);
             if let Some(value) = parse_points(&n.text) {
-                let wl = count_progress(work, &MENU_BANKARA_STRIP);
-                notes.text.push(format!("メニューの進行: {wl:?}"));
-                return Seen::Observed { what: Observed::Udemae { value }, wins: wl.map(|w| w.0), losses: wl.map(|w| w.1) };
+                return Seen::Udemae { value, total: parse_points(&t.text) };
+            }
+            return Seen::Unknown;
+        }
+
+        // ロビーのメニューに出ている自分の値（observed）。見出しが見本で決まらなければ、色と数字の形式で
+        let by_label = self.decide(work, p("menu_x_label"), MENU_LABEL_MIN, notes).is_some();
+        if by_label || shapes::menu_x_label(work) {
+            let n = self.read_glyphs(work, p("menu_x_value"));
+            if by_label || parse_power(&n.guess).is_some() {
+                notes.number(p("menu_x_value"), "メニューの X パワー", &n);
+                if !by_label {
+                    notes.shape(work, p("menu_x_label"), "x_power");
+                }
+                if let Some(value) = parse_power(&n.text) {
+                    let wl = count_progress(work, &MENU_X_STRIP);
+                    notes.text.push(format!("メニューの進行: {wl:?}"));
+                    return Seen::Observed { what: Observed::X { rule: None, value }, wins: wl.map(|w| w.0), losses: wl.map(|w| w.1) };
+                }
+                return Seen::Unknown;
+            }
+        }
+        let by_label = self.decide(work, p("menu_udemae_label"), MENU_LABEL_MIN, notes).is_some();
+        if by_label || shapes::menu_udemae_label(work) {
+            let n = self.read_glyphs(work, p("menu_udemae_value"));
+            if by_label || parse_points(&n.guess).is_some() {
+                notes.number(p("menu_udemae_value"), "メニューのウデマエ", &n);
+                if !by_label {
+                    notes.shape(work, p("menu_udemae_label"), "udemae");
+                }
+                if let Some(value) = parse_points(&n.text) {
+                    let wl = count_progress(work, &MENU_BANKARA_STRIP);
+                    notes.text.push(format!("メニューの進行: {wl:?}"));
+                    return Seen::Observed { what: Observed::Udemae { value }, wins: wl.map(|w| w.0), losses: wl.map(|w| w.1) };
+                }
+                return Seen::Unknown;
             }
         }
 
@@ -341,25 +392,33 @@ impl Recognizer {
             }
         }
 
+        // X パワーの画面: 「Xパワー」の見出し、または（見本で決まらなければ）増減の青緑のしぶきか、
+        // 黒いパネルの決まった場所に「4 桁.1 桁」の数字（手がかりの数字での推測でもよい）
         let label = self.scores(work, p("power_label"));
+        let by_label = label.first().is_some_and(|s| s.score >= POWER_LABEL_MIN);
         if let Some(s) = label.first() {
             notes.text.push(format!("「Xパワー」: 一致度 {:.2}", s.score));
             notes.peaks.push(("「Xパワー」".into(), s.label.clone(), s.score));
-            if s.score >= POWER_LABEL_MIN {
-                let n = self.read_glyphs(work, p("power_number"));
-                notes.number(p("power_number"), "Xパワー", &n);
-                // 増減は任意（見本があれば念押しに使う。無ければ旧値から新値へ動いたのを見届けて出す）。
-                // 大きな数字が読めなくても読む（読めない字を計算で埋めるのに使う）
-                let d = self.read_glyphs(work, p("power_delta"));
-                notes.number(p("power_delta"), "増減", &d);
-                if let Some(value) = parse_power(&n.text) {
-                    return Seen::XPower { value, delta: parse_delta(&d.text) };
-                }
+        }
+        let n = self.read_glyphs(work, p("power_number"));
+        let by_shape = !by_label && (shapes::x_splash(work) || (shapes::result_panel(work) && parse_power(&n.guess).is_some()));
+        if by_label || by_shape {
+            if by_shape {
+                notes.shape(work, p("power_label"), "x_power");
+            }
+            notes.number(p("power_number"), "Xパワー", &n);
+            // 増減は任意（見本があれば念押しに使う。無ければ旧値から新値へ動いたのを見届けて出す）。
+            // 大きな数字が読めなくても読む（読めない字を計算で埋めるのに使う）
+            let d = self.read_glyphs(work, p("power_delta"));
+            notes.number(p("power_delta"), "増減", &d);
+            if let Some(value) = parse_power(&n.text) {
+                return Seen::XPower { value, delta: parse_delta(&d.text) };
             }
         }
         Seen::Unknown
     }
 }
+
 
 /// X パワーの下限（これより下がらない。2026-10 に調べた仕様）。下回る読みは読み違い
 pub const X_POWER_MIN: f64 = 500.0;

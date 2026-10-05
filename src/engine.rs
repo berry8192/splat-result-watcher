@@ -18,7 +18,7 @@ use image::RgbImage;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::learn::Learner;
+use crate::learn::{LabelLearner, Learner};
 use crate::nair::Projector;
 use crate::recognize::Recognizer;
 use crate::recorder::{Recorder, RecorderConfig};
@@ -296,6 +296,7 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
     }
     let mut last_saved = machine.save();
     let mut learner = Learner::default();
+    let mut label_learner = LabelLearner::default();
     let mut projector: Option<Projector> = None;
     let mut recorder: Option<Recorder> = None;
     let mut last_open_try: Option<Instant> = None;
@@ -429,7 +430,14 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
             }
         }
         // 読めない字を、ほかの確かな数字から埋められたら見本に足す（確度の高いものだけ。learn.rs）
-        let learned = learner.feed(Utc::now(), &reading.seen, &reading.numbers, s.recognizer.read().unwrap().templates());
+        // 形と色で見分けた見出しも、別の画面で確かめられたら見本に足す
+        let learned = {
+            let r = s.recognizer.read().unwrap();
+            let now = Utc::now();
+            let mut l = learner.feed(now, &reading.seen, &reading.numbers, r.templates());
+            l.extend(label_learner.feed(now, &reading.seen, &reading.shape_labels, r.templates()));
+            l
+        };
         if !learned.is_empty() {
             let mut r = s.recognizer.write().unwrap();
             for l in learned {

@@ -27,7 +27,7 @@ impl Roi {
     }
 
     /// 撮ったゲーム穴の大きさに合わせる（1024×576 なら 2/3）
-    fn scaled(&self, width: u32) -> (u32, u32, u32, u32) {
+    pub(crate) fn scaled(&self, width: u32) -> (u32, u32, u32, u32) {
         let s = |v: u32| (v as u64 * width as u64 / BASE_W as u64) as u32;
         (s(self.x), s(self.y), s(self.w), s(self.h))
     }

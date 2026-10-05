@@ -6,7 +6,7 @@ WebSocket（既定 `ws://127.0.0.1:3140/events`）で流す単独アプリ。受
 - 約束事: [docs/protocol.md](docs/protocol.md)（正本。受け手に影響する変更は nicomment に知らせる。「N Air の出力の撮り方」の節は nicomment も参照している）
 - 方針・試合の管理・読むもの・見本集めの宿題: [docs/design.md](docs/design.md)
 - **バトルに有利になる情報を出さない**。試合中に出すのは `status` と `battle_started` だけ
-- 認識に LLM を使わない（見本との照合）。ゲームの音は使わない
+- 認識に LLM を使わない（見本との照合。見本が無ければ形と色の決まりごと `src/shapes.rs` と手がかりの数字 `src/starter.rs` で読み、確かめられたものを見本に足す `src/learn.rs`）。ゲームの音は使わない
 - 受け手の動作確認は nicomment 側の模擬サーバ `cargo run --example splat_detect_mock`（../nicomment/app/src-tauri）を参考にする
 
 ## 動かし方
