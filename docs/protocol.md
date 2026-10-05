@@ -85,7 +85,7 @@
 
 ## 出来事
 時刻はすべて RFC 3339（UTC）。モードは `x` / `bankara_challenge` / `bankara_open` / `other`、
-ルールは `area` / `yagura` / `hoko` / `asari`。分からない項目は省くか `null`。
+ルールは `area` / `yagura` / `hoko` / `asari` / `turf_war`（ナワバリバトル。モードは `other`）。分からない項目は省くか `null`。
 
 ### `hello`（seq なし）
 ```json
@@ -122,7 +122,8 @@ nicomment は `in_battle` の間、AI に画面を見せない（設定 `screen_
   数えない。文言の有無で `lose` と見分ける（終盤の切断や自分の切断は普通の `lose`）
 
 `mode` が `other`（ナワバリ・イベント・プラベ・フェス）なら数えない。フェスの本祭の間は X もバンカラも
-開かれない。
+開かれない。`other` の試合も `battle_started` / `result` は流す（試合の区切りとして。2026-10-06 から。
+それまでは `result` を出していなかった）。ナワバリは紹介で分かるので `battle_started` に `"mode":"other","rule":"turf_war"` が付く。
 `rule` が無ければ nicomment は `battle_started` のルール → `started_at` 時点のスケジュールの順で補う。
 
 ### `power`

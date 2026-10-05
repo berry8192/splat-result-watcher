@@ -26,6 +26,8 @@ pub enum Rule {
     Yagura,
     Hoko,
     Asari,
+    /// ナワバリバトル（モードは other。数えないが、試合の区切りとして流す）
+    TurfWar,
 }
 
 impl Rule {
@@ -35,6 +37,7 @@ impl Rule {
             Rule::Yagura => "yagura",
             Rule::Hoko => "hoko",
             Rule::Asari => "asari",
+            Rule::TurfWar => "turf_war",
         }
     }
 }
@@ -313,7 +316,9 @@ impl Game {
     }
 
     fn mode(&self) -> Option<Mode> {
-        let m = self.header.map(|h| h.0).or(self.implied_mode).or(self.matching_mode)?;
+        // ナワバリの紹介で始まった試合は other（結果の帯が読めなくても）
+        let turf = (self.intro_rule == Some(Rule::TurfWar)).then_some(Mode::Other);
+        let m = self.header.map(|h| h.0).or(turf).or(self.implied_mode).or(self.matching_mode)?;
         // オープンの精算（見出しと点線が無い）を見たならオープン
         if m == Mode::BankaraChallenge && self.implied_mode == Some(Mode::BankaraOpen) {
             return Some(Mode::BankaraOpen);
@@ -539,7 +544,9 @@ impl Machine {
                     .filter(|(_, t)| at - *t <= Duration::seconds(MATCHING_FRESH))
                     .map(|(m, _)| m);
                 let mut ev = json!({"type": "battle_started", "match_id": g.id, "at": time(at)});
-                if let Some(m) = g.matching_mode {
+                if r == Some(Rule::TurfWar) {
+                    ev["mode"] = Mode::Other.as_str().into();
+                } else if let Some(m) = g.matching_mode {
                     ev["mode"] = m.as_str().into();
                 }
                 if let Some(r) = r {
@@ -693,9 +700,7 @@ impl Machine {
             return;
         }
         g.settled = true;
-        if mode == Mode::Other {
-            return;
-        }
+        // other（ナワバリなど）も、試合の区切りとして流す（受け手は数えない）
         let outcome = match (note, g.no_contest, g.outcome) {
             (Note::NoContest, _, _) | (_, true, _) | (_, _, None) => "no_contest",
             (Note::Uncounted, _, Some(Outcome::Lose)) => "lose_uncounted",
@@ -939,10 +944,20 @@ mod tests {
 
     #[test]
     fn turf_war_and_unreadable_mode_are_not_counted() {
+        // other の試合も区切りとして流す（受け手は数えない）
         let mut r = Run::new();
         r.intro(Rule::Area).feed(win(), 6).wait(10);
         r.feed(header(Mode::Other, Rule::Area, Note::None), 5);
-        assert_eq!(r.types(), ["battle_started"]);
+        assert_eq!(r.types(), ["battle_started", "result"]);
+        assert_eq!(r.of("result")[0]["mode"], "other");
+
+        // ナワバリの紹介で始まった試合は、結果の帯が読めなくても other
+        let mut r = Run::new();
+        r.intro(Rule::TurfWar).feed(win(), 6).wait(10).wait(READ_TIMEOUT + 5);
+        let started = r.of("battle_started")[0];
+        assert_eq!((started["mode"].as_str(), started["rule"].as_str()), (Some("other"), Some("turf_war")));
+        let res = r.of("result");
+        assert_eq!((res[0]["mode"].as_str(), res[0]["rule"].as_str(), res[0]["outcome"].as_str()), (Some("other"), Some("turf_war"), Some("win")));
 
         let mut r = Run::new();
         r.intro(Rule::Area).feed(win(), 6).wait(READ_TIMEOUT + 5);
@@ -981,11 +996,12 @@ mod tests {
         // 30 秒以内にまた映った勝敗の画面（戦績の見返し）は数えない。空けば新しい試合
         let mut r = Run::new();
         r.feed(win(), 8).feed(header(Mode::Other, Rule::Area, Note::None), 4);
+        let x = |r: &Run| r.of("result").into_iter().filter(|e| e["mode"] == "x").count();
         r.wait(10).feed(Seen::Outcome(Outcome::Lose), 8).wait(5);
         r.feed(header(Mode::X, Rule::Area, Note::None), 5);
-        assert!(r.of("result").is_empty());
+        assert_eq!(x(&r), 0);
         r.wait(31).feed(Seen::Outcome(Outcome::Lose), 8).feed(header(Mode::X, Rule::Area, Note::None), 5);
-        assert_eq!(r.of("result").len(), 1);
+        assert_eq!(x(&r), 1);
     }
 
     #[test]

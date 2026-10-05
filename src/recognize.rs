@@ -333,13 +333,16 @@ impl Recognizer {
         // 1 行目が「ナワバリ」なら紹介とは見ない（ナワバリは数えない）
         if let Some(r) = self.decide(work, p("rule_intro"), RULE_INTRO_MIN, notes).and_then(rule) {
             if r == Rule::Hoko && shapes::turf_intro(work) {
-                notes.text.push("ナワバリバトルの紹介（数えない）".into());
-                return Seen::Unknown;
+                notes.text.push("ナワバリバトルの紹介".into());
+                return Seen::RuleIntro(Rule::TurfWar);
             }
             return Seen::RuleIntro(r);
         }
         if let Some(r) = shapes::rule_intro(work) {
-            notes.shape(work, p("rule_intro"), r.as_str());
+            // ナワバリは見本のラベルに無い（ガチホコと 2 行目が同じなので、見本にもしない）
+            if r != Rule::TurfWar {
+                notes.shape(work, p("rule_intro"), r.as_str());
+            }
             return Seen::RuleIntro(r);
         }
 

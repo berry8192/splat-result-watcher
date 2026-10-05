@@ -533,9 +533,9 @@ pub fn rule_intro(img: &RgbImage) -> Option<Rule> {
     if !(0.18..=0.45).contains(&wr) || ratio(img, INTRO_SPLAT, neutral_dark) < 0.5 {
         return None;
     }
-    // 1 行目が「ナワバリ」ならナワバリバトル（試合として数えないので、紹介とも見ない）
+    // 1 行目が「ナワバリ」ならナワバリバトル（2 行目は「バトル」でガチホコと同じ）
     if turf_intro(img) {
-        return None;
+        return Some(Rule::TurfWar);
     }
     let s2 = compare(img, INTRO_WORD, words())?;
     let mut sc: Vec<(Rule, f64)> = WORDS.iter().zip(s2).map(|((r, _), v)| (*r, v)).collect();
