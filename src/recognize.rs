@@ -335,7 +335,7 @@ impl Recognizer {
 
         // 試合は必ずルール紹介から始まる。見本は 2 行目の語なので、ナワバリバトルの「バトル」がガチホコに見える。
         // 1 行目が「ナワバリ」なら紹介とは見ない（ナワバリは数えない）
-        if let Some(r) = self.decide(work, p("rule_intro"), RULE_INTRO_MIN, notes).and_then(rule) {
+        if let Some(r) = self.decide(work, p("rule_intro"), RULE_INTRO_MIN, notes).and_then(rule).filter(|_| shapes::intro_frame(work)) {
             if r == Rule::Hoko && shapes::turf_intro(work) {
                 notes.text.push("ナワバリバトルの紹介".into());
                 return Seen::RuleIntro(Rule::TurfWar);

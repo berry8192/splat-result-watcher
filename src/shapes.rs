@@ -91,6 +91,8 @@ const MENU_UDEMAE_LABEL: Roi = Roi::new(1320, 148, 90, 32);
 /// ルール紹介の黒いしぶきと、2 行目の語
 const INTRO_SPLAT: Roi = Roi::new(600, 300, 350, 230);
 const INTRO_WORD: Roi = Roi::new(640, 405, 260, 95);
+/// ルール紹介の上の「ルール」の札
+const INTRO_LABEL: Roi = Roi::new(735, 222, 84, 34);
 
 /// 進行の画面のパネルの左上の、バンカラの黄色い札（「チャレンジ」「昇格戦」。手元で 0.42〜0.52、X は 0.0）
 const PROGRESS_TAG: Roi = Roi::new(380, 140, 190, 55);
@@ -527,10 +529,17 @@ fn render(font: &FontArc, text: &str) -> Option<Vec<bool>> {
     fit(&px, w, h)
 }
 
+/// ルール紹介の画面の作り: 真ん中に黒いしぶきがあり、白いのはその中の語だけ（しぶきの中の白は手元で 0.09〜0.15、
+/// 「ルール」の札も黒地に白い字で 0〜0.32）。見本の語だけで決めると、配信に映った別の画面の太い白い字
+/// （2026-10-06 の本番で、ブラウザに出た「ガチエリア」の字）をルール紹介と見てしまうので、見本の経路でもこれを通す
+pub fn intro_frame(img: &RgbImage) -> bool {
+    ratio(img, INTRO_SPLAT, neutral_dark) >= 0.5 && ratio(img, INTRO_SPLAT, white) <= 0.25 && ratio(img, INTRO_LABEL, white) <= 0.7
+}
+
 /// ルール紹介の画面なら、そのルール
 pub fn rule_intro(img: &RgbImage) -> Option<Rule> {
     let wr = ratio(img, INTRO_WORD, white);
-    if !(0.18..=0.45).contains(&wr) || ratio(img, INTRO_SPLAT, neutral_dark) < 0.5 {
+    if !(0.18..=0.45).contains(&wr) || !intro_frame(img) {
         return None;
     }
     // 1 行目が「ナワバリ」ならナワバリバトル（2 行目は「バトル」でガチホコと同じ）
