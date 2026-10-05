@@ -21,11 +21,13 @@ pub struct Settings {
     pub record: bool,
     /// 見本の録画の上限（GB）。超えたら古い順に消す
     pub record_cap_gb: f64,
+    /// デバッグ用に、何かに当たったフレームの読みと画面を残す（hits\日付\。上限 500MB）
+    pub hit_log: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { port: 3140, width: 1280, record: false, record_cap_gb: 20.0 }
+        Settings { port: 3140, width: 1280, record: false, record_cap_gb: 20.0, hit_log: true }
     }
 }
 
@@ -73,6 +75,7 @@ impl Settings {
             width: self.width,
             record: self.record,
             record_cap_bytes: (self.record_cap_gb * 1024.0 * 1024.0 * 1024.0) as u64,
+            hits_dir: self.hit_log.then(|| data_dir().join("hits")),
             ..EngineConfig::default()
         }
     }

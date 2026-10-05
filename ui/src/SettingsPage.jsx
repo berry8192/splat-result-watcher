@@ -83,6 +83,10 @@ export default function SettingsPage() {
           />
           <span className="small">　超えたら古い順に消す。次に録画を始めたときに効く</span>
         </label>
+        <label>
+          <input type="checkbox" checked={form.hit_log} onChange={(e) => set("hit_log", e.target.checked)} /> 当たりの記録を残す
+          （デバッグ用。何かに当たった画面と読みを hits\日付\ に。上限 500MB。起動し直すと効く）
+        </label>
         <button onClick={save}>残す</button>
         {needsRestart && <span className="small">　番号と撮る幅は起動し直すと効く</span>}
         {msg && <span className={msg.bad ? "bad" : "good"}>　{msg.text}</span>}

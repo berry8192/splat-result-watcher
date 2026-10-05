@@ -1,6 +1,7 @@
 //! splat-result-watcher の中身。コマンドの exe（`src/main.rs`）と GUI の exe（`src/bin/gui.rs`）が使う。
 
 pub mod engine;
+pub mod hitlog;
 pub mod layout;
 pub mod learn;
 pub mod matching;

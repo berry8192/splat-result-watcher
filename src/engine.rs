@@ -18,6 +18,7 @@ use image::RgbImage;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::hitlog::HitLog;
 use crate::learn::{LabelLearner, Learner};
 use crate::nair::Projector;
 use crate::recognize::Recognizer;
@@ -60,6 +61,8 @@ pub struct EngineConfig {
     pub templates_dir: PathBuf,
     /// 今の試合の控え（落ちても、リザルトまでに起動し直せば続きから読む）
     pub game_path: PathBuf,
+    /// デバッグ用の当たりの記録（hitlog.rs）。None なら残さない
+    pub hits_dir: Option<PathBuf>,
 }
 
 impl Default for EngineConfig {
@@ -72,6 +75,7 @@ impl Default for EngineConfig {
             events_path: data_dir().join("events.jsonl"),
             templates_dir: Templates::default_dir(),
             game_path: data_dir().join("current_game.json"),
+            hits_dir: Some(data_dir().join("hits")),
         }
     }
 }
@@ -297,6 +301,7 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
     let mut last_saved = machine.save();
     let mut learner = Learner::default();
     let mut label_learner = LabelLearner::default();
+    let mut hits = cfg.hits_dir.clone().map(HitLog::new);
     let mut projector: Option<Projector> = None;
     let mut recorder: Option<Recorder> = None;
     let mut last_open_try: Option<Instant> = None;
@@ -378,6 +383,8 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
         let read_now = last_read.is_none_or(|t| t.elapsed() + tick / 2 >= interval);
         let in_battle = stage == crate::state::Stage::InBattle.as_str();
         let t = Instant::now();
+        // 当たりの記録に付ける画面（このフレームで読んだときだけ）
+        let mut frame_img: Option<RgbImage> = None;
         let reading = match projector.as_ref().map(|p| p.capture()) {
             Some(Ok(img)) if !read_now => {
                 let game = layout::crop_game(&img);
@@ -411,6 +418,9 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
                     keep_recent(s, &game, seen.clone());
                 }
                 last_seen = seen;
+                if hits.is_some() {
+                    frame_img = Some(game.clone());
+                }
                 *s.frame.lock().unwrap() = Some(game);
                 reading
             }
@@ -438,16 +448,23 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
             l.extend(label_learner.feed(now, &reading.seen, &reading.shape_labels, r.templates()));
             l
         };
+        let mut learned_notes = Vec::new();
         if !learned.is_empty() {
             let mut r = s.recognizer.write().unwrap();
             for l in learned {
+                let line = format!("{} の「{}」。{}", l.pool.dir_name(), l.label, l.why);
                 match r.templates_mut().add_auto(l.pool, &l.label, l.patch) {
-                    Ok(_) => s.log(format!("見本を自動で足した: {} の「{}」。{}", l.pool.dir_name(), l.label, l.why)),
+                    Ok(_) => s.log(format!("見本を自動で足した: {line}")),
                     Err(e) => s.log(format!("見本を自動で足せない: {e:#}")),
                 }
+                learned_notes.push(line);
             }
         }
-        for ev in machine.feed(Utc::now(), reading.seen) {
+        let events = machine.feed(Utc::now(), reading.seen.clone());
+        if let Some(h) = hits.as_mut() {
+            h.record(machine.stage().as_str(), &reading, &learned_notes, &events, frame_img.as_ref());
+        }
+        for ev in events {
             match s.server.publish(ev.clone()) {
                 Ok(seq) => {
                     s.log(format!("出来事 #{seq}: {ev}"));
