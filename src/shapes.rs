@@ -142,6 +142,23 @@ pub fn udemae_mode(img: &RgbImage) -> Option<Mode> {
     }
 }
 
+/// 参加費の確かめの右の紫の丸（「-180p」）と、その左の黄緑の大きな数字
+const FEE_CIRCLE: Roi = Roi::new(935, 465, 70, 70);
+const FEE_DIGITS: Roi = Roi::new(665, 505, 225, 85);
+
+fn fee_purple([r, g, b]: [u8; 3]) -> bool {
+    b >= 180 && r < 170 && g < 100
+}
+
+fn fee_green([r, g, b]: [u8; 3]) -> bool {
+    g >= 180 && r >= 150 && b < 110
+}
+
+/// バンカラマッチ（チャレンジ）の参加費の確かめ（「ウデマエポイントを180p支払って バンカラマッチに挑戦しますか？」）
+pub fn entry_fee(img: &RgbImage) -> bool {
+    ratio(img, FEE_CIRCLE, fee_purple) >= 0.5 && ratio(img, FEE_DIGITS, fee_green) >= 0.08
+}
+
 /// 精算のゲージ。真ん中の黒いパネルも要る（試合の始まりの「GO!」の白っぽいしぶきをゲージと見たことがある。本物のパネルは 0.94〜1.00、GO! は 0.00）
 pub fn udemae_gauge(img: &RgbImage) -> bool {
     ratio(img, GAUGE, mid_gray) >= 0.6 && result_panel(img)

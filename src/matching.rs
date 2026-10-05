@@ -92,6 +92,11 @@ pub fn binary_bright(img: &RgbImage, roi: Roi, margin: u32, min: u8) -> Patch {
     cut(img, roi, margin, |[r, g, b]| (r.max(g).max(b) >= min) as u8)
 }
 
+/// 橙の字だけを白にする（白い字の文の中の「180p」など）
+pub fn binary_orange(img: &RgbImage, roi: Roi, margin: u32) -> Patch {
+    cut(img, roi, margin, |[r, g, b]| (r >= 200 && (90..=190).contains(&g) && b < 90) as u8)
+}
+
 /// しきい値を変えて 2 値にする（明るい色の上の白い字など。X パワーの増減は水色のしぶきの上で 140）
 pub fn binary_at(img: &RgbImage, roi: Roi, margin: u32, min: u8) -> Patch {
     cut(img, roi, margin, |[r, g, b]| (r.min(g).min(b) >= min) as u8)

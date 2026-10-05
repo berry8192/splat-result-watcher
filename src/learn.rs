@@ -2,7 +2,7 @@
 //! 確度の高いものだけ、その字の見本として登録する（利用者が数字を入れる手間を減らす）。
 //!
 //! 埋め方:
-//! - 同じ画面の中の計算: ウデマエ「動く前 + TOTAL = 動いた後」、X パワー「動く前 + 増減 = 動いた後」
+//! - 同じ画面の中の計算: ウデマエ「動く前 + TOTAL（オープンは 1 試合ぶんの増減） = 動いた後」、X パワー「動く前 + 増減 = 動いた後」
 //! - 同じ値: 試合後の値（X パワー・ウデマエ・昇格の 300p）と、その後ロビーのメニューに出る値
 //!   （間にルール紹介が無く、5 分以内。X は同じルールの時間帯のうち）
 //!
@@ -179,8 +179,9 @@ impl Learner {
         let delta = |s: &str| parse_delta(s).map(tenths);
         type Parse<'a> = &'a dyn Fn(&str) -> Option<i64>;
         type Show = fn(i64) -> String;
-        let sums: [(&str, &str, &str, Parse, Parse, Show, Show); 2] = [
+        let sums: [(&str, &str, &str, Parse, Parse, Show, Show); 3] = [
             ("udemae_value", "udemae_total", "ウデマエ", &points, &points, |v| v.to_string(), |v| v.to_string()),
+            ("udemae_value", "udemae_delta", "ウデマエ", &points, &points, |v| v.to_string(), |v| v.to_string()),
             ("power_number", "power_delta", "X パワー", &power, &delta, power_text, delta_text),
         ];
         for (value_id, delta_id, name, parse_v, parse_d, show_v, show_d) in sums {

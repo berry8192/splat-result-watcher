@@ -125,8 +125,12 @@ pub struct Place {
     pub bright: bool,
 }
 
-/// 先頭の「=」（マイナスと同じ形に切れる）を捨てる場所。TOTAL はマイナスにならない
-const STRIP_EQUALS: &[&str] = &["udemae_total"];
+/// 橙の字だけを読む場所（白い字の文の中にある）
+const ORANGE_ONLY: &[&str] = &["fee_amount"];
+
+/// 「=」（背の低い記号に切れる）より右だけを読む場所。精算の増減は、チャレンジの TOTAL は左にイカの印が並び、
+/// オープンの 1 試合ぶんは左にずれてマイナスにもなる（「= -13p」）。「=」が無ければ読まない
+const STRIP_EQUALS: &[&str] = &["udemae_total", "udemae_delta"];
 
 pub const OUTCOME_LABELS: &[(&str, &str)] = &[("win", "WIN!"), ("lose", "LOSE...")];
 pub const MODE_LABELS: &[(&str, &str)] = &[
@@ -272,13 +276,47 @@ pub const PLACES: &[Place] = &[
     },
     Place {
         id: "udemae_total",
-        name: "精算の TOTAL の数字（最後の p は読まない）",
+        name: "精算のチャレンジの TOTAL（「=」より右、最後の p は読まない）",
         short: "TOTAL",
-        roi: Roi::new(820, 318, 275, 88),
+        roi: Roi::new(740, 318, 360, 88),
         min: WHITE_MIN,
         pool: Pool::DigitTotal,
         drop_last: true,
         bright: false,
+        kind: Kind::Glyphs,
+    },
+    Place {
+        id: "udemae_delta",
+        name: "精算のオープンの 1 試合ぶんの増減（「= -13p」。TOTAL より上にある。「=」より右、最後の p は読まない）",
+        short: "増減",
+        roi: Roi::new(740, 288, 360, 84),
+        // 「=」は明るい灰色（190 前後）なので、白の 200 では縁しか残らない
+        min: 160,
+        pool: Pool::DigitTotal,
+        drop_last: true,
+        bright: false,
+        kind: Kind::Glyphs,
+    },
+    Place {
+        id: "fee_amount",
+        name: "参加費の確かめの文の中の参加費「180p」（橙の字だけを読む。最後の p は読まない）",
+        short: "参加費",
+        roi: Roi::new(600, 305, 400, 36),
+        min: 0,
+        pool: Pool::Digit,
+        drop_last: true,
+        bright: false,
+        kind: Kind::Glyphs,
+    },
+    Place {
+        id: "fee_value",
+        name: "参加費の確かめの「現在のウデマエポイント」（黄緑の太い字。参加費を引いた後の値まで数え下がる。最後の p は読まない）",
+        short: "参加費の後",
+        roi: Roi::new(665, 505, 225, 85),
+        min: 150,
+        pool: Pool::Digit,
+        drop_last: true,
+        bright: true,
         kind: Kind::Glyphs,
     },
     Place {
@@ -609,6 +647,52 @@ fn drop_rank(mut p: Patch) -> Patch {
     p
 }
 
+/// 一番右の「=」（上下に離れた 2 本の横棒）より右だけを残す。「=」が無ければ None
+fn after_equals(p: &Patch) -> Option<Patch> {
+    let white = |x: u32, y: u32| p.px[(y * p.w + x) as usize] != 0;
+    let mut cut_at = None;
+    let mut x = 0;
+    while x < p.w {
+        if !(0..p.h).any(|y| white(x, y)) {
+            x += 1;
+            continue;
+        }
+        let x0 = x;
+        while x < p.w && (0..p.h).any(|y| white(x, y)) {
+            x += 1;
+        }
+        // 白のある行を上下のかたまりに分ける
+        let rows: Vec<bool> = (0..p.h).map(|y| (x0..x).any(|xx| white(xx, y))).collect();
+        let mut bands = Vec::new();
+        let mut y = 0;
+        while y < p.h as usize {
+            if rows[y] {
+                let y0 = y;
+                while y < p.h as usize && rows[y] {
+                    y += 1;
+                }
+                bands.push((y0, y));
+            } else {
+                y += 1;
+            }
+        }
+        let w = (x - x0) as usize;
+        if let [(a0, a1), (b0, b1)] = bands[..] {
+            // 棒は横長で、間は棒の太さくらい空く
+            let (ha, hb, gap) = (a1 - a0, b1 - b0, b0 - a1);
+            if w >= 2 * ha.max(hb) && gap * 3 >= ha.min(hb) && gap <= 3 * ha.max(hb) {
+                cut_at = Some(x);
+            }
+        }
+    }
+    let x0 = cut_at?;
+    Some(Patch {
+        w: p.w - x0,
+        h: p.h,
+        px: (0..p.h).flat_map(|y| (x0..p.w).map(move |x| (x, y))).map(|(x, y)| p.px[(y * p.w + x) as usize]).collect(),
+    })
+}
+
 pub fn cut_glyphs(work: &RgbImage, place: &Place) -> Vec<matching::Glyph> {
     let mut p = cut(work, place);
     if TRIM_LEFT_CUT.contains(&place.id) {
@@ -617,11 +701,13 @@ pub fn cut_glyphs(work: &RgbImage, place: &Place) -> Vec<matching::Glyph> {
     if DROP_RANK.contains(&place.id) {
         p = drop_rank(p);
     }
-    let mut g = matching::glyphs(&p);
     if STRIP_EQUALS.contains(&place.id) {
-        let n = g.iter().take_while(|g| !matches!(g, matching::Glyph::Shape(_))).count();
-        g.drain(..n);
+        match after_equals(&p) {
+            Some(q) => p = q,
+            None => return Vec::new(),
+        }
     }
+    let mut g = matching::glyphs(&p);
     if place.drop_last {
         if let Some(i) = g.iter().rposition(|g| matches!(g, matching::Glyph::Shape(_))) {
             g.truncate(i);
@@ -637,7 +723,9 @@ pub fn cut(work: &RgbImage, place: &Place) -> Patch {
 
 /// ずらして探す余白を付けて切り出す（照合するもの）
 pub fn cut_margin(work: &RgbImage, place: &Place, margin: u32) -> Patch {
-    if place.bright {
+    if ORANGE_ONLY.contains(&place.id) {
+        matching::binary_orange(work, place.roi, margin)
+    } else if place.bright {
         matching::binary_bright(work, place.roi, margin, place.min)
     } else {
         matching::binary_at(work, place.roi, margin, place.min)

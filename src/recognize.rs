@@ -92,6 +92,27 @@ pub struct Score {
 }
 
 /// 数字を読んだ結果
+/// 推測を読みとして使ってよい一致度と、2 番目との差（精算の増減・参加費の後の値の大きな字だけ。2026-10-06 の録画の
+/// 「-13」「20」「80」「277」は、正しい字が 0.70〜0.93、2 番目との差 0.09〜0.46 だった）
+const SURE_GUESS_MIN: f64 = 0.65;
+const SURE_GUESS_MARGIN: f64 = 0.08;
+
+/// 見本で読めない字が、どれも手がかりの数字ではっきり決まるなら、その推測。テンプレートには足さない
+/// （足すのは計算で確かめられたものだけ。learn.rs）
+fn sure_guess(place: &Place, r: &GlyphRead) -> Option<String> {
+    for ((c, _), g) in r.text.chars().zip(&r.chars).zip(&r.glyphs) {
+        if c != '?' {
+            continue;
+        }
+        let Glyph::Shape(g) = g else { return None };
+        let s = starter::guess(place.pool, g)?;
+        if s.score < SURE_GUESS_MIN || s.margin < SURE_GUESS_MARGIN {
+            return None;
+        }
+    }
+    (!r.guess.contains('?')).then(|| r.guess.clone())
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct GlyphRead {
     /// 読めた文字列。見本の無い字・一致度の足りない字は `?`
@@ -454,14 +475,28 @@ impl Recognizer {
             }
             let n = self.read_glyphs(work, p("udemae_value"));
             notes.number(p("udemae_value"), "ウデマエ", &n);
-            // TOTAL は、ゲージの数字が読めなくても読む（読めない字を計算で埋めるのに使う）
-            let t = self.read_glyphs(work, p("udemae_total"));
-            notes.number(p("udemae_total"), "TOTAL", &t);
+            // 増減は、ゲージの数字が読めなくても読む（読めない字を計算で埋めるのに使う）。
+            // チャレンジは最後に TOTAL、オープンは 1 試合ごとに、少し上の段に出る
             let mode = shapes::udemae_mode(work);
+            let id = if mode == Some(Mode::BankaraOpen) { "udemae_delta" } else { "udemae_total" };
+            let t = self.read_glyphs(work, p(id));
+            notes.number(p(id), if id == "udemae_delta" { "増減" } else { "TOTAL" }, &t);
+            let total = parse_points(&t.text).or_else(|| sure_guess(p(id), &t).and_then(|g| parse_points(&g)));
             if let Some(value) = parse_points(&n.text) {
-                return Seen::Udemae { value, total: parse_points(&t.text), mode };
+                return Seen::Udemae { value, total, mode };
             }
-            return Seen::UdemaeScreen { mode };
+            return Seen::UdemaeScreen { mode, total };
+        }
+
+        // 参加費の確かめ（チャレンジを始めるとき）。数字は参加費を引いた後の値まで数え下がる
+        if shapes::entry_fee(work) {
+            notes.text.push("形で見分けた: 参加費".into());
+            let n = self.read_glyphs(work, p("fee_value"));
+            notes.number(p("fee_value"), "参加費の後", &n);
+            let f = self.read_glyphs(work, p("fee_amount"));
+            notes.number(p("fee_amount"), "参加費", &f);
+            let after = parse_points(&n.text).or_else(|| sure_guess(p("fee_value"), &n).and_then(|g| parse_points(&g)));
+            return Seen::EntryFee { after, fee: parse_points(&f.text) };
         }
 
         // ロビーのメニューに出ている自分の値（observed）と、選んでいるモードとルール（lobby）

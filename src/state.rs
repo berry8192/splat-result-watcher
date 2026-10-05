@@ -113,11 +113,14 @@ pub enum Seen {
     Calibrating,
     /// 「計測完了!! 1830.4」
     Calibrated(f64),
-    /// バンカラの精算。`value` はゲージの下の今のポイント、`total` は「TOTAL = n p」（読めたときだけ）
+    /// バンカラの精算。`value` はゲージの下の今のポイント、`total` はチャレンジの「TOTAL = n p」・オープンの「= -13p」（読めたときだけ）
     /// `mode` は見出しと点線の有無で分かるモード（オープンの精算には「挑戦終了!」などの見出しと点線が無い）
     Udemae { value: i32, total: Option<i32>, mode: Option<Mode> },
-    /// 精算の画面だが、数字はまだ見本で読めない（モードの手がかりにだけ使う）
-    UdemaeScreen { mode: Option<Mode> },
+    /// 精算の画面だが、ゲージの下の数字はまだ見本で読めない（増減が読めれば、直前に分かっていたポイントに足す）
+    UdemaeScreen { mode: Option<Mode>, total: Option<i32> },
+    /// 参加費の確かめ。`after` は「現在のウデマエポイント」（参加費を引いた後の値まで数え下がる。途中の値も読む）、
+    /// `fee` は文の中の参加費
+    EntryFee { after: Option<i32>, fee: Option<i32> },
     /// 昇格の画面「300p ウデマエポイントはリセットされます」
     UdemaeReset(i32),
     /// 試合と結び付かない、今見えた自分の値（`wins` / `losses` は進行が見えたときだけ）。
@@ -158,6 +161,10 @@ const STABLE: u32 = 3;
 const STABLE_INTRO: u32 = 2;
 /// 何フレーム見えなければ画面が消えたとみなすか
 const GONE: u32 = 2;
+/// 精算の増減は数秒しか映らない（OBS からは 1 秒に 1 枚）ので、2 回で落ち着いたとみなす
+const STABLE_DELTA: u32 = 2;
+/// 参加費の確かめの後、これまでにチャレンジのマッチングが始まれば払ったとみなす
+const FEE_WITHIN: i64 = 180;
 /// 何フレーム映像が無ければ no_signal にするか
 const NO_SIGNAL: u32 = 4;
 /// 勝敗が出ないまま、試合を見失ったとみなす長さ（延長を含めても十分長く）
@@ -265,6 +272,9 @@ struct Post {
     #[serde(skip)]
     udemae: Settle<i32>,
     udemae_total: Option<i32>,
+    /// 落ち着いた増減（ゲージの数字が読めないとき、直前に分かっていたポイントに足す）
+    #[serde(skip)]
+    udemae_delta: Settle<i32>,
     udemae_done: bool,
     #[serde(skip)]
     progress: Settle<(u8, u8)>,
@@ -287,6 +297,7 @@ impl Post {
             calibrated_done: false,
             udemae: Settle::new(STABLE),
             udemae_total: None,
+            udemae_delta: Settle::new(STABLE_DELTA),
             udemae_done: false,
             progress: Settle::new(STABLE),
             progress_done: false,
@@ -373,6 +384,29 @@ pub struct Machine {
     episode_fresh: bool,
     /// 試合 ID の通し番号（同じ分に 2 試合あっても重ならないように）
     serial: u32,
+    /// 直前に分かっていたウデマエポイント（出した observed・power・手動の値）。精算の増減と参加費を足す元
+    known_udemae: Option<i32>,
+    /// 参加費の確かめで分かったこと。チャレンジのマッチングか試合が始まったら、払ったとみなして出す
+    pending_fee: Option<Fee>,
+}
+
+/// 参加費の確かめ
+#[derive(Clone, Copy, Debug)]
+struct Fee {
+    at: DateTime<Utc>,
+    /// 確かめを見る前に分かっていた値
+    before: Option<i32>,
+    fee: Option<i32>,
+    /// 最後に読めた「現在のウデマエポイント」と、2 回続けて同じだった値（数え終わった）
+    last: Option<i32>,
+    stopped: Option<i32>,
+}
+
+impl Fee {
+    /// 払った後の値。数え終わった値が読めていればそれ、なければ前の値から参加費を引く
+    fn after(&self) -> Option<i32> {
+        self.stopped.or(self.before.zip(self.fee).map(|(b, f)| b - f))
+    }
 }
 
 /// `observed` を比べる形: (x か, ルール, 値の 10 倍, 勝ち, 負け, ランク)
@@ -415,7 +449,14 @@ impl Machine {
             episode: None,
             episode_fresh: false,
             serial: 0,
+            known_udemae: None,
+            pending_fee: None,
         }
+    }
+
+    /// 手で直したウデマエポイント（設定ウィンドウの「手動操作」）
+    pub fn set_known_udemae(&mut self, v: i32) {
+        self.known_udemae = Some(v);
     }
 
     /// 控えるもの（今の試合と通し番号）。試合が無ければ `null` の試合を控える
@@ -488,8 +529,25 @@ impl Machine {
             Seen::Matching(m) | Seen::MatchingValue { mode: m, .. } => Some(*m),
             _ => None,
         };
+        // 参加費の確かめ: 引いた後の値（数え下がるので一番小さいもの）を控える。「やめとく」もあるので、
+        // チャレンジのマッチングが始まったら払ったとみなして出す。数え下がる間しか映らず（2 秒ほど）同じ値が続かないので、
+        // 落ち着くのを待たない（見本で読めた字だけなので、読み違いは少ない）
+        if let Seen::EntryFee { after, fee } = seen {
+            let fresh = self.pending_fee.filter(|f| at - f.at <= Duration::seconds(FEE_WITHIN));
+            let mut f = fresh.unwrap_or(Fee { at, before: self.known_udemae, fee: None, last: None, stopped: None });
+            f.at = at;
+            f.fee = fee.or(f.fee);
+            if after.is_some() && after == f.last {
+                f.stopped = after;
+            }
+            f.last = after;
+            self.pending_fee = Some(f);
+        }
         if self.matching.push(mm) {
             self.pending_mode = self.matching.latest.map(|m| (m, at));
+            if self.matching.latest == Some(Mode::BankaraChallenge) {
+                self.pay_fee(at, &mut out);
+            }
         }
         if let (Some(m), Some((pm, t))) = (mm, &mut self.pending_mode) {
             if *pm == m {
@@ -577,6 +635,11 @@ impl Machine {
                     .or(self.lobby.latest.filter(|(_, lr)| Some(*lr) == r && *lr != Rule::TurfWar).map(|(m, _)| m));
                 // 試合の後にメニューへ戻ったら、同じ選択でも出し直す
                 self.lobby_sent = None;
+                // 参加費を払ってすぐ試合の一覧に覆われ、マッチングが落ち着かないまま始まることもある（2026-10-06 の録画）。
+                // 試合の前の値なので、battle_started より前に出す
+                if g.matching_mode == Some(Mode::BankaraChallenge) {
+                    self.pay_fee(at, &mut out);
+                }
                 let mut ev = json!({"type": "battle_started", "match_id": g.id, "at": time(at)});
                 if r == Some(Rule::TurfWar) {
                     ev["mode"] = Mode::Other.as_str().into();
@@ -644,7 +707,7 @@ impl Machine {
         if let Some(g) = self.game.as_mut().filter(|g| g.has_end()) {
             match &seen {
                 Seen::XPower { .. } | Seen::Calibrating | Seen::Calibrated(_) => g.implied_mode = Some(Mode::X),
-                Seen::Udemae { mode: Some(Mode::BankaraOpen), .. } | Seen::UdemaeScreen { mode: Some(Mode::BankaraOpen) } => {
+                Seen::Udemae { mode: Some(Mode::BankaraOpen), .. } | Seen::UdemaeScreen { mode: Some(Mode::BankaraOpen), .. } => {
                     g.implied_mode = Some(Mode::BankaraOpen)
                 }
                 Seen::Udemae { .. } | Seen::UdemaeScreen { .. } | Seen::UdemaeReset(_) => {
@@ -660,7 +723,7 @@ impl Machine {
         if let Some(g) = &mut self.game {
             Self::try_result(g, false, &mut out);
             if g.settled && g.counted {
-                Self::post(g, at, &seen, &mut out);
+                Self::post(g, at, &seen, self.known_udemae, &mut out);
             }
             // 見失った試合を閉じる
             let quiet = at - g.last_fact;
@@ -673,7 +736,32 @@ impl Machine {
         if close {
             self.close(at, &mut out);
         }
+        self.remember_udemae(&out);
         out
+    }
+
+    /// チャレンジが始まった: 参加費の確かめを見ていれば払ったとみなし、払った後の値を出す。
+    /// 払った後の値が分からなければ、覚えている値はもう古いので忘れる（次の精算の増減を足さない）
+    fn pay_fee(&mut self, at: DateTime<Utc>, out: &mut Vec<Value>) {
+        let Some(f) = self.pending_fee.take().filter(|f| at - f.at <= Duration::seconds(FEE_WITHIN)) else { return };
+        match f.after() {
+            Some(v) => out.push(json!({"type": "observed", "kind": "udemae", "value": v, "at": time(at)})),
+            None => self.known_udemae = None,
+        }
+    }
+
+    /// 出したウデマエポイントを、次の精算・参加費の元として覚える
+    fn remember_udemae(&mut self, out: &[Value]) {
+        for ev in out {
+            let v = match (ev["type"].as_str(), ev["kind"].as_str()) {
+                (Some("observed"), Some("udemae")) => ev["value"].as_i64(),
+                (Some("power"), Some("udemae")) => ev["after"].as_i64(),
+                _ => None,
+            };
+            if let Some(v) = v {
+                self.known_udemae = Some(v as i32);
+            }
+        }
     }
 
     fn open(&mut self, at: DateTime<Utc>, rule: Option<Rule>) -> Game {
@@ -752,7 +840,7 @@ impl Machine {
         out.push(ev);
     }
 
-    fn post(g: &mut Game, at: DateTime<Utc>, seen: &Seen, out: &mut Vec<Value>) {
+    fn post(g: &mut Game, at: DateTime<Utc>, seen: &Seen, known_udemae: Option<i32>, out: &mut Vec<Value>) {
         let p = &mut g.post;
         // X パワー: 落ち着いた最初の値が旧値。旧値＋増減と合えばその場で出す
         let xp = match seen {
@@ -806,6 +894,22 @@ impl Machine {
             if let (Some(before), Some(after), Some(t)) = (p.udemae.first, p.udemae.latest, p.udemae_total) {
                 if before + t == after && before != after {
                     Self::power_udemae(g, at, Some(before), after, out);
+                }
+            }
+        }
+        // ゲージの下の数字が読めなくても、増減が読めれば直前に分かっていたポイントに足す
+        // （ゲージの数字は照合する大きさでは 10 画素ほどしかなく、まだ読めないことが多い）
+        let p = &mut g.post;
+        // 元の値は、増減が落ち着いたときに分かっているものだけ（後から分かった値は、もう増減の後の値かもしれない）
+        let settled = p.udemae_delta.push(match seen {
+            Seen::Udemae { total, .. } | Seen::UdemaeScreen { total, .. } => *total,
+            _ => None,
+        });
+        if settled && !p.udemae_done {
+            if let (Some(k), Some(d)) = (known_udemae, p.udemae_delta.latest) {
+                // ゲージの動く前の値が読めていて、元の値と違うなら、どちらが正しいか分からないので使わない
+                if p.udemae.first.is_none_or(|f| f == k) {
+                    Self::power_udemae(g, at, Some(k), k + d, out);
                 }
             }
         }
@@ -1268,6 +1372,65 @@ mod tests {
     }
 
     #[test]
+    fn udemae_delta_is_added_to_the_last_known_points_when_the_gauge_is_unreadable() {
+        let mut r = Run::new();
+        let mv = |v| Seen::MatchingValue { mode: Mode::BankaraOpen, what: Observed::Udemae { value: Some(v), rank: None }, wins: None, losses: None };
+        r.feed(mv(284), 10).intro(Rule::Asari).feed(Seen::Outcome(Outcome::Lose), 6).wait(10);
+        let screen = |t| Seen::UdemaeScreen { mode: Some(Mode::BankaraOpen), total: t };
+        r.feed(screen(None), 1).feed(screen(Some(-13)), 3).wait(60).intro(Rule::Asari);
+        let pw = r.events.iter().find(|e| e["type"] == "power").expect("増減から出す");
+        assert_eq!((pw["before"].as_i64(), pw["after"].as_i64()), (Some(284), Some(271)));
+        // 次の試合は、出した値が元になる
+        r.feed(Seen::Outcome(Outcome::Lose), 6).wait(10).feed(screen(Some(-13)), 3).wait(60).intro(Rule::Asari);
+        let pw: Vec<_> = r.events.iter().filter(|e| e["type"] == "power").map(|e| e["after"].as_i64()).collect();
+        assert_eq!(pw, [Some(271), Some(258)]);
+    }
+
+    #[test]
+    fn udemae_delta_is_not_used_without_a_known_value() {
+        let mut r = Run::new();
+        r.intro(Rule::Asari).feed(Seen::Outcome(Outcome::Lose), 6).wait(10);
+        r.feed(Seen::UdemaeScreen { mode: Some(Mode::BankaraOpen), total: Some(-13) }, 3).wait(60).intro(Rule::Asari);
+        assert!(!r.events.iter().any(|e| e["type"] == "power"));
+    }
+
+    #[test]
+    fn udemae_delta_is_not_added_to_a_value_learned_after_it() {
+        let mut r = Run::new();
+        r.intro(Rule::Asari).feed(Seen::Outcome(Outcome::Lose), 6).wait(10);
+        r.feed(Seen::UdemaeScreen { mode: Some(Mode::BankaraOpen), total: Some(-13) }, 3).wait(20);
+        // 精算の後のマッチングで今の値が分かっても、さっきの増減は足さない（もう足した後の値）
+        let mv = Seen::MatchingValue { mode: Mode::BankaraChallenge, what: Observed::Udemae { value: Some(258), rank: None }, wins: None, losses: None };
+        r.feed(mv, 4).wait(30).intro(Rule::Area);
+        assert!(!r.events.iter().any(|e| e["type"] == "power"));
+    }
+
+    #[test]
+    fn entry_fee_is_sent_when_the_challenge_matching_starts() {
+        let fee = |v| Seen::EntryFee { after: Some(v), fee: Some(180) };
+        let observed = |r: &Run| r.events.iter().filter(|e| e["type"] == "observed").map(|e| e["value"].as_i64()).collect::<Vec<_>>();
+        // 数え下がって 277 で止まる。払ってマッチングに進んだら出す
+        let mut r = Run::new();
+        r.feed(fee(425), 1).feed(fee(300), 1).feed(fee(277), 2).wait(5).feed(Seen::Matching(Mode::BankaraChallenge), 4);
+        assert_eq!(observed(&r), [Some(277)]);
+        // 数え終わる前に進んだ: 途中の値は使わず、前に分かっていた値から参加費を引く
+        let mut r = Run::new();
+        r.m.set_known_udemae(457);
+        r.feed(fee(425), 1).feed(Seen::EntryFee { after: None, fee: Some(180) }, 1).wait(5).feed(Seen::Matching(Mode::BankaraChallenge), 4);
+        assert_eq!(observed(&r), [Some(277)]);
+        // どちらも分からなければ出さず、覚えていた値も忘れる（次の精算の増減を古い値に足さない）
+        let mut r = Run::new();
+        r.m.set_known_udemae(457);
+        r.feed(Seen::EntryFee { after: Some(425), fee: None }, 1).wait(5).feed(Seen::Matching(Mode::BankaraChallenge), 4);
+        assert!(observed(&r).is_empty());
+        assert_eq!(r.m.known_udemae, None);
+        // 「やめとく」でオープンのマッチングへ進んだら出さない
+        let mut r = Run::new();
+        r.feed(fee(277), 2).wait(5).feed(Seen::Matching(Mode::BankaraOpen), 4);
+        assert!(!r.events.iter().any(|e| e["type"] == "observed"));
+    }
+
+    #[test]
     fn bankara_open_is_decided_by_the_matching() {
         let mut r = Run::new();
         r.feed(Seen::Matching(Mode::BankaraOpen), 10).intro(Rule::Area).feed(win(), 6);
@@ -1373,7 +1536,8 @@ mod tests {
 }
 
 /// 録画（samples/record/日時/HHMMSS_mmm.jpg）を、本番と同じ読み取りと状態の移り変わりに通して、流れる出来事を出す。
-/// 照合には手元の見本を使う（`SRW_REC=samples/record/20261006-000342 cargo test --release -- --ignored replay_record --nocapture`）
+/// 照合には手元の見本を使う（`SRW_REC=samples/record/20261006-000342 cargo test --release -- --ignored replay_record --nocapture`）。
+/// `SRW_KNOWN=284` で始めのウデマエポイントを渡す
 #[cfg(test)]
 mod replay {
     use super::*;
@@ -1390,6 +1554,10 @@ mod replay {
         files.sort();
         let rec = Recognizer::new(Templates::load(&Templates::default_dir()).unwrap());
         let mut m = Machine::new(Config::default());
+        // 録画の始めのウデマエポイント（分かっていれば。手動操作で入れた値の代わり）
+        if let Some(v) = std::env::var("SRW_KNOWN").ok().and_then(|v| v.parse().ok()) {
+            m.set_known_udemae(v);
+        }
         let mut last = String::new();
         for p in files {
             let stem = p.file_stem().unwrap().to_string_lossy().to_string();

@@ -91,16 +91,24 @@ pub struct Guess {
 
 /// 見本の無い字（大きさをそろえた 30×30）を、手がかりの数字で推測する
 pub fn guess(pool: Pool, g: &Patch) -> Option<Guess> {
+    let sc = ranking(pool, g)?;
+    Some(Guess { c: sc[0].0, score: sc[0].1, margin: sc[0].1 - sc[1].1 })
+}
+
+/// 10 個の数字すべての似ている度合い（近い順）
+pub fn ranking(pool: Pool, g: &Patch) -> Option<Vec<(char, f64)>> {
     let set = set_for(pool)?;
     if g.w != 30 || g.h != 30 {
         return None;
     }
     let g_skel = if set == Set::Bold { skel(g) } else { g.clone() };
-    let mut sc: Vec<(usize, f64)> =
-        prepared(set).iter().enumerate().map(|(d, t)| (d, similarity(set, g, &g_skel, t))).collect();
+    let mut sc: Vec<(char, f64)> = prepared(set)
+        .iter()
+        .enumerate()
+        .map(|(d, t)| (char::from_digit(d as u32, 10).unwrap(), similarity(set, g, &g_skel, t)))
+        .collect();
     sc.sort_by(|a, b| b.1.total_cmp(&a.1));
-    let c = char::from_digit(sc[0].0 as u32, 10)?;
-    Some(Guess { c, score: sc[0].1, margin: sc[0].1 - sc[1].1 })
+    Some(sc)
 }
 
 #[cfg(test)]
@@ -138,5 +146,35 @@ mod tests {
             all_ok &= ok == n;
         }
         assert!(all_ok);
+    }
+}
+
+/// 録画の 1 枚（ゲーム画面）の数字の場所ごとに、手がかりの数字の順位を並べる
+/// （`SRW_IMGS=a.jpg;b.jpg SRW_PLACES=udemae_value,udemae_total cargo test --release -- --ignored measure_starter_rank --nocapture`）
+#[test]
+#[ignore]
+fn measure_starter_rank() {
+    let list = std::env::var("SRW_IMGS").unwrap_or_default();
+    let places = std::env::var("SRW_PLACES").unwrap_or_default();
+    for p in list.split(';').filter(|p| !p.is_empty()) {
+        let img = image::open(p).unwrap().to_rgb8();
+        let work = image::imageops::resize(&img, 1024, 576, image::imageops::FilterType::Triangle);
+        println!("{}", p.rsplit(['/', '\\']).next().unwrap());
+        for id in places.split(',').filter(|s| !s.is_empty()) {
+            let place = crate::templates::place(id).unwrap();
+            let raw = matching::glyphs(&crate::templates::cut(&work, place));
+            println!("  raw: {}", raw.iter().map(|g| match g { matching::Glyph::Dot => ".", matching::Glyph::Minus => "-", _ => "#" }).collect::<String>());
+            let gs = crate::templates::cut_glyphs(&work, place);
+            println!("  {id}: {} 字", gs.len());
+            for g in gs {
+                match g {
+                    matching::Glyph::Shape(g) => {
+                        let r = ranking(place.pool, &g).unwrap();
+                        println!("    {}", r.iter().map(|(c, v)| format!("{c}{:.2}", v)).collect::<Vec<_>>().join(" "));
+                    }
+                    other => println!("    {other:?}"),
+                }
+            }
+        }
     }
 }

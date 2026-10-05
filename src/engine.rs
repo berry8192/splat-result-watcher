@@ -119,6 +119,8 @@ struct Shared {
     record: AtomicBool,
     /// 今の試合を手で捨てる（次のフレームで）
     reset_game: AtomicBool,
+    /// 手で直したウデマエポイント（次の精算・参加費の元にする）
+    manual_udemae: Mutex<Option<i32>>,
     snap: Mutex<Snapshot>,
     events: Mutex<VecDeque<Value>>,
     log: Mutex<VecDeque<String>>,
@@ -174,6 +176,7 @@ impl Engine {
             stop: AtomicBool::new(false),
             record: AtomicBool::new(cfg.record),
             reset_game: AtomicBool::new(false),
+            manual_udemae: Mutex::new(None),
             snap: Mutex::new(Snapshot {
                 stage: "idle".into(),
                 addr: format!("ws://{}/events", cfg.addr),
@@ -245,6 +248,11 @@ impl Engine {
     /// 手で直した値（設定ウィンドウの「手動操作」）をイベントとして流す。`type` と `at` はここで付ける
     pub fn publish_manual(&self, mut ev: Value) -> Result<u64> {
         ev["type"] = "manual".into();
+        if ev["kind"] == "udemae" {
+            if let Some(v) = ev["value"].as_i64() {
+                *self.shared.manual_udemae.lock().unwrap() = Some(v as i32);
+            }
+        }
         ev["at"] = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true).into();
         let s = &self.shared;
         let seq = s.server.publish(ev.clone())?;
@@ -411,6 +419,9 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
             }
         }
 
+        if let Some(v) = s.manual_udemae.lock().unwrap().take() {
+            machine.set_known_udemae(v);
+        }
         if s.reset_game.swap(false, Ordering::Relaxed) {
             match machine.drop_game() {
                 Some(id) => s.log(format!("試合 {id} を手動で破棄")),
