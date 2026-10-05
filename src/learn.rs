@@ -119,8 +119,9 @@ impl Learner {
             if gap > EPISODE_GAP {
                 tr.settled.clear();
             }
-            if gap > RUN_GAP || tr.text != read.text {
-                tr.text = read.text.clone();
+            // 推測まで同じなら同じ絵（推測は切り出した形だけで決まる）
+            if gap > RUN_GAP || tr.text != read.guess {
+                tr.text = read.guess.clone();
                 tr.run = 0;
             }
             tr.run += 1;
@@ -128,7 +129,7 @@ impl Learner {
             if tr.run != STABLE || read.chars.is_empty() {
                 continue;
             }
-            if tr.settled.last().is_none_or(|s| s.read.text != read.text) {
+            if tr.settled.last().is_none_or(|s| s.read.guess != read.guess) {
                 tr.settled.push(Settled { at, read: read.clone(), battle });
             }
             for l in self.infer(place, t) {
@@ -147,43 +148,51 @@ impl Learner {
     /// `place` が落ち着いたときに、埋められるものを探す
     fn infer(&self, place: &str, t: &Templates) -> Vec<Learned> {
         let mut out = Vec::new();
-        let mut try_fill = |target: &str, read: &GlyphRead, expected: String, why: String| {
-            out.extend(fill(target, read, &expected, &why, t));
-        };
 
-        // ウデマエ: 動く前 + TOTAL = 動いた後
-        if matches!(place, "udemae_value" | "udemae_total") {
-            let s = self.settled("udemae_value");
-            if let (Some(b), Some(a), Some(tot)) = (s.first(), s.last(), self.settled("udemae_total").last()) {
-                if s.len() >= 2 {
-                    let (b, a, tot) = (&b.read, &a.read, &tot.read);
-                    let (pb, pa, pt) = (parse_points(&b.text), parse_points(&a.text), parse_points(&tot.text));
-                    let why = |x: &str| format!("ウデマエ {} + TOTAL {} = {}（{x}を計算で埋めた）", b.text, tot.text, a.text);
-                    match (pb, pa, pt) {
-                        (None, Some(a), Some(tt)) => try_fill("udemae_value", b, (a - tt).to_string(), why("動く前")),
-                        (Some(b), None, Some(tt)) => try_fill("udemae_value", a, (b + tt).to_string(), why("動いた後")),
-                        (Some(b), Some(a), None) if a != b => try_fill("udemae_total", tot, (a - b).to_string(), why("TOTAL")),
-                        _ => {}
+        // 同じ画面の中の計算: 動く前 + 増減（TOTAL）= 動いた後
+        let points = |s: &str| parse_points(s).map(i64::from);
+        let power = |s: &str| parse_power(s).map(tenths);
+        let delta = |s: &str| parse_delta(s).map(tenths);
+        type Parse<'a> = &'a dyn Fn(&str) -> Option<i64>;
+        type Show = fn(i64) -> String;
+        let sums: [(&str, &str, &str, Parse, Parse, Show, Show); 2] = [
+            ("udemae_value", "udemae_total", "ウデマエ", &points, &points, |v| v.to_string(), |v| v.to_string()),
+            ("power_number", "power_delta", "X パワー", &power, &delta, power_text, delta_text),
+        ];
+        for (value_id, delta_id, name, parse_v, parse_d, show_v, show_d) in sums {
+            if place != value_id && place != delta_id {
+                continue;
+            }
+            let s = self.settled(value_id);
+            let (Some(b), Some(a), Some(d)) = (s.first(), s.last(), self.settled(delta_id).last()) else { continue };
+            if s.len() < 2 {
+                continue;
+            }
+            let (b, a, d) = (&b.read, &a.read, &d.read);
+            let why = format!("{name} {} と {} で {} になった", b.guess, d.guess, a.guess);
+            // 確かな読み（見本で読めた）と、推測込みの読み
+            let (cb, ca, cd) = (parse_v(&b.text), parse_v(&a.text), parse_d(&d.text));
+            let (gb, ga, gd) = (cb.or(parse_v(&b.guess)), ca.or(parse_v(&a.guess)), cd.or(parse_d(&d.guess)));
+
+            // 推測込みで 3 つとも読めて計算がぴったり合えば、推測した字を見本にする
+            // （別々に読んだ 3 つの数字が合うので、推測の読み違いはまず残らない）
+            if let (Some(vb), Some(va), Some(vd)) = (gb, ga, gd) {
+                if vb + vd == va && va != vb {
+                    for (id, r, certain) in [(value_id, b, cb), (value_id, a, ca), (delta_id, d, cd)] {
+                        if certain.is_none() {
+                            out.extend(fill(id, r, &r.guess, &format!("{why}（推測が計算で確かめられた）"), Verified::Sum, t));
+                        }
                     }
+                    continue;
                 }
             }
-        }
-
-        // X パワー: 動く前 + 増減 = 動いた後
-        if matches!(place, "power_number" | "power_delta") {
-            let s = self.settled("power_number");
-            if let (Some(b), Some(a), Some(d)) = (s.first(), s.last(), self.settled("power_delta").last()) {
-                if s.len() >= 2 {
-                    let (b, a, d) = (&b.read, &a.read, &d.read);
-                    let (pb, pa, pd) = (parse_power(&b.text), parse_power(&a.text), parse_delta(&d.text));
-                    let why = |x: &str| format!("X パワー {} {} = {}（{x}を計算で埋めた）", b.text, d.text, a.text);
-                    match (pb.map(tenths), pa.map(tenths), pd.map(tenths)) {
-                        (None, Some(a), Some(dd)) => try_fill("power_number", b, power_text(a - dd), why("動く前")),
-                        (Some(b), None, Some(dd)) => try_fill("power_number", a, power_text(b + dd), why("動いた後")),
-                        (Some(b), Some(a), None) if a != b => try_fill("power_delta", d, delta_text(a - b), why("増減")),
-                        _ => {}
-                    }
-                }
+            // 確かな読みが 2 つあれば、残りの 1 つを計算で埋める
+            let why = |x: &str| format!("{why}（{x}を計算で埋めた）");
+            match (cb, ca, cd) {
+                (None, Some(va), Some(vd)) => out.extend(fill(value_id, b, &show_v(va - vd), &why("動く前"), Verified::Few, t)),
+                (Some(vb), None, Some(vd)) => out.extend(fill(value_id, a, &show_v(vb + vd), &why("動いた後"), Verified::Few, t)),
+                (Some(vb), Some(va), None) if va != vb => out.extend(fill(delta_id, d, &show_d(va - vb), &why("増減"), Verified::Few, t)),
+                _ => {}
             }
         }
 
@@ -202,8 +211,8 @@ impl Learner {
             }
             let why = |x: &str, v: &str| format!("試合後の {result} と、その後のメニューの {menu} は同じ値 {v}（{x}を埋めた）");
             match (complete(&r.read), complete(&m.read)) {
-                (true, false) => try_fill(menu, &m.read, r.read.text.clone(), why("メニュー", &r.read.text)),
-                (false, true) => try_fill(result, &r.read, m.read.text.clone(), why("試合後", &m.read.text)),
+                (true, false) => out.extend(fill(menu, &m.read, &r.read.text, &why("メニュー", &r.read.text), Verified::Few, t)),
+                (false, true) => out.extend(fill(result, &r.read, &m.read.text, &why("試合後", &m.read.text), Verified::Few, t)),
                 _ => {}
             }
         }
@@ -211,8 +220,17 @@ impl Learner {
     }
 }
 
+/// 埋める答えの確かさ
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Verified {
+    /// 推測込みの 3 つの数字の計算が合った（読めない字がいくつあってもよい）
+    Sum,
+    /// 確かな読みから出した答え（読めない字は少しだけ、読めた字が答えと合うこと）
+    Few,
+}
+
 /// `read` の読めない字を `expected` で埋める。確度の条件を満たさなければ空
-fn fill(place_id: &str, read: &GlyphRead, expected: &str, why: &str, t: &Templates) -> Vec<Learned> {
+fn fill(place_id: &str, read: &GlyphRead, expected: &str, why: &str, how: Verified, t: &Templates) -> Vec<Learned> {
     let Some(place) = templates::place(place_id) else { return Vec::new() };
     let got: Vec<char> = read.text.chars().collect();
     let want: Vec<char> = expected.chars().collect();
@@ -221,7 +239,12 @@ fn fill(place_id: &str, read: &GlyphRead, expected: &str, why: &str, t: &Templat
     }
     let unknown: Vec<usize> = (0..got.len()).filter(|&i| got[i] == '?').collect();
     let known = got.iter().filter(|c| c.is_ascii_digit()).count();
-    if unknown.is_empty() || unknown.len() > MAX_UNKNOWN || known < MIN_KNOWN {
+    if unknown.is_empty() || (how == Verified::Few && (unknown.len() > MAX_UNKNOWN || known < MIN_KNOWN)) {
+        return Vec::new();
+    }
+    // 手がかりの数字の推測が答えと食い違う字があれば、答えか切り出しを疑う
+    let guessed: Vec<char> = read.guess.chars().collect();
+    if guessed.len() == want.len() && unknown.iter().any(|&i| guessed[i] != '?' && guessed[i] != want[i]) {
         return Vec::new();
     }
     if (0..got.len()).any(|i| got[i] != '?' && got[i] != want[i]) {
@@ -267,8 +290,13 @@ mod tests {
         Patch { w: 30, h: 30, px }
     }
 
-    /// 見えている数字 `truth` を、`text` の `?` の所だけ読めなかったものとして作る
+    /// 見えている数字 `truth` を、`text` の `?` の所だけ読めなかったものとして作る（推測もできなかった）
     fn rd(text: &str, truth: &str) -> GlyphRead {
+        rdg(text, text, truth)
+    }
+
+    /// `guess` は手がかりの数字での推測
+    fn rdg(text: &str, guess: &str, truth: &str) -> GlyphRead {
         let mut chars = Vec::new();
         let mut glyphs = Vec::new();
         for (c, tc) in text.chars().zip(truth.chars()) {
@@ -279,7 +307,7 @@ mod tests {
             });
             chars.push((c, if c == '?' { 0.5 } else { 0.95 }));
         }
-        GlyphRead { text: text.into(), chars, glyphs }
+        GlyphRead { text: text.into(), chars, guess: guess.into(), glyphs }
     }
 
     struct Run {
@@ -400,6 +428,40 @@ mod tests {
     }
 
     #[test]
+    fn with_no_templates_guesses_are_kept_when_the_sum_is_right() {
+        let mut r = Run::new();
+        let d = ("power_delta", rdg("???.?", "+62.2", "+62.2"));
+        r.feed(Seen::Unknown, &[("power_number", rdg("????.?", "2194.6", "2194.6")), d.clone()], 4);
+        r.feed(Seen::Unknown, &[("power_number", rdg("????.?", "2256.8", "2256.8")), d], 4);
+        let mut got: Vec<String> = r.got.iter().map(|l| format!("{}:{}", l.pool.dir_name(), l.label)).collect();
+        got.sort();
+        // 同じ形の字はまとめる（2 は 2 か所、6 は大きな数字と増減の両方）
+        assert_eq!(
+            got,
+            ["digit:1", "digit:2", "digit:4", "digit:5", "digit:6", "digit:8", "digit:9", "digit_small:2", "digit_small:6", "digit_small:plus"]
+        );
+    }
+
+    #[test]
+    fn a_wrong_guess_breaks_the_sum_and_nothing_is_kept() {
+        let mut r = Run::new();
+        let d = ("power_delta", rdg("+62.2", "+62.2", "+62.2"));
+        r.feed(Seen::Unknown, &[("power_number", rdg("21?4.6", "2194.6", "2194.6")), d.clone()], 4);
+        // 8 を 3 と推測した（本当は 2256.8）
+        r.feed(Seen::Unknown, &[("power_number", rdg("2256.?", "2256.3", "2256.8")), d], 4);
+        // 動いた後の 8 は推測と食い違うので足さない。動く前の 9 は確かな 2 つ（動いた後は読めていない）が無いので足さない
+        assert!(r.got.is_empty(), "{:?}", r.labels());
+    }
+
+    #[test]
+    fn a_guess_against_the_answer_stops_the_fill() {
+        let mut r = Run::new();
+        r.feed(Seen::Unknown, &[("power_number", rd("2147.3", "2147.3"))], 4).wait(30);
+        r.feed(Seen::Unknown, &[("menu_x_value", rdg("21?7.3", "2197.3", "2147.3"))], 4);
+        assert!(r.got.is_empty());
+    }
+
+    #[test]
     fn a_glyph_like_another_digit_is_not_added() {
         let dir = std::env::temp_dir().join(format!("srw-learn-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -410,6 +472,64 @@ mod tests {
         r.feed(Seen::Unknown, &[("power_number", rd("2147.3", "2147.3"))], 4).wait(30);
         r.feed(Seen::Unknown, &[("menu_x_value", rd("21?7.3", "2147.3"))], 4);
         assert!(r.got.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// 手元の見本（samples/snaps）で、数字の見本が 1 つも無いところから、画面を見るだけで見本ができるか試す。
+/// `cargo test --release -- --ignored learns_from_snaps --nocapture`
+#[cfg(test)]
+mod with_samples {
+    use super::*;
+    use crate::recognize::Recognizer;
+
+    fn load(key: &str) -> image::RgbImage {
+        let dir = crate::samples_dir().join("snaps");
+        let p = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|e| e == "png") && !p.to_string_lossy().ends_with("_ほこ.png"))
+            .find(|p| p.file_name().unwrap().to_string_lossy().contains(key))
+            .unwrap();
+        image::open(p).unwrap().to_rgb8()
+    }
+
+    #[test]
+    #[ignore]
+    fn learns_from_snaps() {
+        // 手元の見本から、数字以外（見出しなど）だけを写した置き場所
+        let dir = std::env::temp_dir().join(format!("srw-learn-snaps-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let src = Templates::load(&Templates::default_dir()).unwrap();
+        let mut t = Templates::load(&dir).unwrap();
+        for pool in Pool::ALL.into_iter().filter(|p| !DIGIT_POOLS.contains(p)) {
+            for tm in src.get(pool) {
+                t.add(pool, &tm.label, tm.patch.clone()).unwrap();
+            }
+        }
+        let mut rec = Recognizer::new(t);
+        for frames in [["101412", "101431"], ["040820", "040905"]] {
+            let mut l = Learner::default();
+            let mut at = chrono::Utc::now();
+            for key in frames {
+                let img = load(key);
+                for _ in 0..4 {
+                    let r = rec.recognize(&img);
+                    let nums: Vec<String> = r.numbers.iter().map(|(p, g)| format!("{p}={}/{}", g.text, g.guess)).collect();
+                    let got = l.feed(at, &r.seen, &r.numbers, rec.templates());
+                    for g in &got {
+                        println!("  足す {} {}: {}", g.pool.dir_name(), g.label, g.why);
+                    }
+                    for g in got {
+                        rec.templates_mut().add_auto(g.pool, &g.label, g.patch).unwrap();
+                    }
+                    at += Duration::milliseconds(500);
+                    if at.timestamp_subsec_millis() < 500 {
+                        println!("{key}: {:?} {}", r.seen, nums.join(" "));
+                    }
+                }
+            }
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

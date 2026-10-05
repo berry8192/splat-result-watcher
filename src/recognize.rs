@@ -12,6 +12,7 @@ use serde::Serialize;
 
 use crate::matching::{self, Glyph, Roi};
 use crate::nair;
+use crate::starter;
 use crate::state::{Mode, Note, Observed, Outcome, Rule, Seen};
 use crate::templates::{self, glyph_char, place, Place, Templates};
 use crate::NO_SIGNAL_DARK;
@@ -84,6 +85,9 @@ pub struct GlyphRead {
     pub text: String,
     /// 1 文字ずつ: (読んだ字, 一致度)。小数点とマイナスは形で決まるので (`.` / `-`, 1.0)
     pub chars: Vec<(char, f64)>,
+    /// `text` の `?` を、手がかりの数字（starter.rs）で推測して埋めたもの。推測できない字は `?` のまま。
+    /// 確かな読みとしては使わず、計算で確かめてから見本にする（learn.rs）
+    pub guess: String,
     /// 切り出した 1 文字ずつ（`chars` と同じ並び。見本を自動で足すときに使う）
     #[serde(skip)]
     pub glyphs: Vec<Glyph>,
@@ -192,12 +196,14 @@ impl Recognizer {
         let list = self.t.get(place.pool);
         let mut text = String::new();
         let mut chars = Vec::new();
+        let mut guess = String::new();
         let glyphs = self.glyphs(work, place);
-        for g in &glyphs {
+        for (i, g) in glyphs.iter().enumerate() {
             let g = match g {
                 Glyph::Dot | Glyph::Minus => {
                     let c = if matches!(g, Glyph::Dot) { '.' } else { '-' };
                     text.push(c);
+                    guess.push(c);
                     chars.push((c, 1.0));
                     continue;
                 }
@@ -214,7 +220,9 @@ impl Recognizer {
             match best {
                 Some((c, v)) if v >= GLYPH_MIN => {
                     text.push(c);
+                    guess.push(c);
                     chars.push((c, v));
+                    continue;
                 }
                 Some((c, v)) => {
                     text.push('?');
@@ -225,8 +233,15 @@ impl Recognizer {
                     chars.push(('?', 0.0));
                 }
             }
+            // 増減の先頭の形のある字は「+」（「-」は低いかたまりで、形で決まる）。手がかりの数字に「+」は無い
+            let c = if place.id == "power_delta" && i == 0 {
+                Some('+')
+            } else {
+                starter::guess(place.pool, g).map(|g| g.c)
+            };
+            guess.push(c.unwrap_or('?'));
         }
-        GlyphRead { text, chars, glyphs }
+        GlyphRead { text, chars, guess, glyphs }
     }
 
     /// 1 フレームを読む。`game` はゲーム穴（大きさは問わない）

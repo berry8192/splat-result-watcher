@@ -91,7 +91,11 @@ export default function TemplatesPage() {
     try {
       const v = await invoke("inspect", { placeId });
       setView(v);
-      if (v.reading) setText(v.reading.text.includes("?") ? "" : v.reading.text);
+      // 読めない字があれば、手がかりの数字での推測を入れておく（確かめてから登録する）
+      if (v.reading) {
+        const r = v.reading;
+        setText(!r.text.includes("?") ? r.text : r.guess.includes("?") ? "" : r.guess);
+      }
     } catch (e) {
       setMsg({ bad: true, text: String(e) });
     }
@@ -288,6 +292,9 @@ export default function TemplatesPage() {
                   {view.reading && (
                     <div>
                       読み: <b>{view.reading.text}</b>{" "}
+                      {view.reading.guess !== view.reading.text && (
+                        <span className="small">（手がかりの数字での推測: {view.reading.guess}。確かめてから登録）</span>
+                      )}{" "}
                       <span className="small">
                         1 文字ずつの一致度 {view.reading.chars.map(([c, v]) => `${c}:${v.toFixed(2)}`).join(" ")}
                       </span>

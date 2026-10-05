@@ -9,6 +9,7 @@ pub mod recognize;
 pub mod recorder;
 pub mod server;
 pub mod settings;
+pub mod starter;
 pub mod state;
 pub mod templates;
 

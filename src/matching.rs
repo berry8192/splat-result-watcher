@@ -267,6 +267,76 @@ pub fn glyph_iou(a: &Patch, b: &Patch) -> f64 {
     }
 }
 
+/// 白い所を上下左右に `n` 回広げる
+pub fn dilate(p: &Patch, n: u32) -> Patch {
+    let mut cur = p.px.clone();
+    let (w, h) = (p.w as i64, p.h as i64);
+    for _ in 0..n {
+        let at = |x: i64, y: i64| x >= 0 && y >= 0 && x < w && y < h && cur[(y * w + x) as usize] != 0;
+        let next: Vec<u8> = (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .map(|(x, y)| (at(x, y) || at(x - 1, y) || at(x + 1, y) || at(x, y - 1) || at(x, y + 1)) as u8)
+            .collect();
+        cur = next;
+    }
+    Patch { w: p.w, h: p.h, px: cur }
+}
+
+/// 細線化（Zhang-Suen）。太さの違う字体どうしを、線の通り道だけで比べるのに使う
+pub fn skeleton(p: &Patch) -> Patch {
+    let (w, h) = (p.w as i64, p.h as i64);
+    let mut b: Vec<u8> = p.px.iter().map(|&v| (v != 0) as u8).collect();
+    loop {
+        let mut changed = false;
+        for step in 0..2 {
+            let at = |b: &[u8], x: i64, y: i64| -> u8 {
+                if x >= 0 && y >= 0 && x < w && y < h {
+                    b[(y * w + x) as usize]
+                } else {
+                    0
+                }
+            };
+            let mut del = Vec::new();
+            for y in 0..h {
+                for x in 0..w {
+                    if at(&b, x, y) == 0 {
+                        continue;
+                    }
+                    // 上から時計回り
+                    let n = [
+                        at(&b, x, y - 1),
+                        at(&b, x + 1, y - 1),
+                        at(&b, x + 1, y),
+                        at(&b, x + 1, y + 1),
+                        at(&b, x, y + 1),
+                        at(&b, x - 1, y + 1),
+                        at(&b, x - 1, y),
+                        at(&b, x - 1, y - 1),
+                    ];
+                    let count: u8 = n.iter().sum();
+                    let trans = (0..8).filter(|&i| n[i] == 0 && n[(i + 1) % 8] == 1).count();
+                    let ok = if step == 0 {
+                        n[0] * n[2] * n[4] == 0 && n[2] * n[4] * n[6] == 0
+                    } else {
+                        n[0] * n[2] * n[6] == 0 && n[0] * n[4] * n[6] == 0
+                    };
+                    if (2..=6).contains(&count) && trans == 1 && ok {
+                        del.push((y * w + x) as usize);
+                    }
+                }
+            }
+            for i in &del {
+                b[*i] = 0;
+            }
+            changed |= !del.is_empty();
+        }
+        if !changed {
+            break;
+        }
+    }
+    Patch { w: p.w, h: p.h, px: b }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
