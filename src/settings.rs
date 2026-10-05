@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::data_dir;
 use crate::engine::EngineConfig;
+use crate::layout::GameArea;
 use crate::source::{CaptureConfig, CaptureFrom};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -29,6 +30,8 @@ pub struct Settings {
     /// OBS の obs-websocket の番号とパスワード（OBS の「ツール → WebSocket サーバー設定」）
     pub obs_port: u16,
     pub obs_password: String,
+    /// 配信の出力（1920×1080）の中のゲーム画面の位置。16:9
+    pub game_area: GameArea,
     /// 見せる窓の見た目（見せる窓の右クリックと、設定の窓から変える。すぐ効く）
     pub display: DisplaySettings,
 }
@@ -73,6 +76,7 @@ impl Default for Settings {
             capture_from: CaptureFrom::Auto,
             obs_port: crate::obs::DEFAULT_PORT,
             obs_password: String::new(),
+            game_area: GameArea::default(),
             display: DisplaySettings::default(),
         }
     }
@@ -106,6 +110,9 @@ impl Settings {
         if !(640..=1920).contains(&self.width) {
             bail!("撮る幅は 640〜1920 にする（1280 を勧める）");
         }
+        if let Err(e) = self.game_area.check() {
+            bail!(e);
+        }
         if self.record_cap_gb.is_nan() || self.record_cap_gb <= 0.0 {
             bail!("録画の上限は 0 より大きくする");
         }
@@ -128,6 +135,7 @@ impl Settings {
             record_cap_bytes: (self.record_cap_gb * 1024.0 * 1024.0 * 1024.0) as u64,
             hits_dir: self.hit_log.then(|| data_dir().join("hits")),
             capture: self.capture_config(),
+            game_area: self.game_area,
             ..EngineConfig::default()
         }
     }

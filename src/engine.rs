@@ -19,6 +19,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::hitlog::HitLog;
+use crate::layout::GameArea;
 use crate::learn::{LabelLearner, Learner};
 use crate::source::{CaptureConfig, Source};
 use crate::recognize::Recognizer;
@@ -55,6 +56,8 @@ pub struct EngineConfig {
     pub width: u32,
     /// どの配信ソフトから撮るか（N Air か OBS）
     pub capture: CaptureConfig,
+    /// 出力の中のゲーム画面の位置
+    pub game_area: GameArea,
     /// 見本の録画も回す
     pub record: bool,
     /// 見本の録画の上限（バイト）
@@ -73,6 +76,7 @@ impl Default for EngineConfig {
             addr: crate::server::DEFAULT_ADDR.parse().unwrap(),
             width: 1280,
             capture: CaptureConfig::default(),
+            game_area: GameArea::default(),
             record: false,
             record_cap_bytes: 20 * 1024 * 1024 * 1024,
             events_path: data_dir().join("events.jsonl"),
@@ -392,7 +396,7 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
         let mut frame_img: Option<RgbImage> = None;
         let reading = match projector.as_mut().map(|p| p.capture()) {
             Some(Ok(img)) if !read_now => {
-                let game = layout::crop_game(&img);
+                let game = layout::crop_game(&img, cfg.game_area);
                 if !in_battle && nair::dark_ratio(&game) <= crate::NO_SIGNAL_DARK {
                     keep_recent(s, &game, last_seen.clone());
                 }
@@ -402,7 +406,7 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
             Some(Ok(img)) => {
                 times.push(t.elapsed().as_secs_f64() * 1000.0);
                 last_read = Some(Instant::now());
-                let game = layout::crop_game(&img);
+                let game = layout::crop_game(&img, cfg.game_area);
                 let reading = s.recognizer.read().unwrap().recognize(&game);
                 if let Some(r) = &recorder {
                     if reading.seen != Seen::NoSignal {

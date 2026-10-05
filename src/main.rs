@@ -96,7 +96,7 @@ fn shot(args: &[String]) -> Result<()> {
     let img = last.unwrap();
     img.save(&out)
         .with_context(|| format!("{} を書けない", out.display()))?;
-    let game = layout::crop_game(&img);
+    let game = layout::crop_game(&img, Settings::load().0.game_area);
     let game_out = out.with_file_name(format!(
         "{}_game.png",
         out.file_stem().unwrap_or_default().to_string_lossy()
@@ -147,7 +147,7 @@ fn snap(args: &[String]) -> Result<()> {
     let at = Local::now();
     let img = projector.capture()?;
     drop(projector);
-    let img = if full { img } else { layout::crop_game(&img) };
+    let img = if full { img } else { layout::crop_game(&img, Settings::load().0.game_area) };
 
     std::fs::create_dir_all(&dir).with_context(|| format!("{} を作れない", dir.display()))?;
     let name = format!("{}_{}.png", at.format("%Y%m%d-%H%M%S"), file_safe(&note));
@@ -239,7 +239,8 @@ fn record(args: &[String]) -> Result<()> {
     let recorder = Recorder::start(cfg)?;
     println!("今回のフォルダ: {}", recorder.session_dir.display());
 
-    let capture_cfg = Settings::load().0.capture_config();
+    let settings = Settings::load().0;
+    let (capture_cfg, game_area) = (settings.capture_config(), settings.game_area);
     let mut projector: Option<Source> = None;
     let mut last_open_try: Option<Instant> = None;
     let mut interval = INTERVAL;
@@ -283,7 +284,7 @@ fn record(args: &[String]) -> Result<()> {
             Ok(img) => {
                 let ms = t.elapsed().as_secs_f64() * 1000.0;
                 stats.add(ms);
-                let img = if full { img } else { layout::crop_game(&img) };
+                let img = if full { img } else { layout::crop_game(&img, game_area) };
                 if nair::dark_ratio(&img) > NO_SIGNAL_DARK {
                     stats.dark += 1;
                 } else if recorder.push(at, img) {

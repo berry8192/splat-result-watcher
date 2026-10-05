@@ -28,6 +28,17 @@ function Section({ id, title, children }) {
   );
 }
 
+/** ゲーム画面の位置のプリセット（1920×1080 の中。src/layout.rs と同じ値） */
+const AREAS = {
+  full: { x: 0, y: 0, w: 1920, h: 1080 },
+  nicomment: { x: 0, y: 108, w: 1536, h: 864 },
+};
+
+function areaPreset(a) {
+  const hit = Object.entries(AREAS).find(([, p]) => p.x === a.x && p.y === a.y && p.w === a.w && p.h === a.h);
+  return hit ? hit[0] : "custom";
+}
+
 export default function SettingsPage() {
   const [form, setForm] = useState(null);
   const [saved, setSaved] = useState(null);
@@ -44,6 +55,12 @@ export default function SettingsPage() {
 
   const set = (k, v) => setForm({ ...form, [k]: v });
   const setD = (k, v) => setForm({ ...form, display: { ...form.display, [k]: v } });
+  const setArea = (k, v) => {
+    const a = { ...form.game_area, [k]: Math.max(0, Math.round(Number(v) || 0)) };
+    // 幅を変えたら高さを 16:9 に合わせる
+    if (k === "w") a.h = Math.round((a.w * 9) / 16);
+    set("game_area", a);
+  };
   const dirty = JSON.stringify(form) !== JSON.stringify(saved);
   const needsRestart =
     saved &&
@@ -52,6 +69,7 @@ export default function SettingsPage() {
       form.capture_from !== saved.capture_from ||
       form.obs_port !== saved.obs_port ||
       form.obs_password !== saved.obs_password ||
+      JSON.stringify(form.game_area) !== JSON.stringify(saved.game_area) ||
       form.hit_log !== saved.hit_log);
 
   const save = async () => {
@@ -143,6 +161,27 @@ export default function SettingsPage() {
           <input type="number" value={form.width} onChange={(e) => set("width", Number(e.target.value))} />
           <span className="small">　1280 を推奨します（1920 では負荷が高くなります）</span>
         </label>
+        <label>
+          ゲーム画面の位置
+          <select value={areaPreset(form.game_area)} onChange={(e) => AREAS[e.target.value] && set("game_area", AREAS[e.target.value])}>
+            <option value="full">全画面（配信の画面全体がゲーム画面）</option>
+            <option value="nicomment">nicomment のスプラトゥーン配置（左寄せ・上下に帯）</option>
+            <option value="custom">数値で指定</option>
+          </select>
+          <div>
+            x
+            <input type="number" value={form.game_area.x} onChange={(e) => setArea("x", e.target.value)} />
+            　y
+            <input type="number" value={form.game_area.y} onChange={(e) => setArea("y", e.target.value)} />
+            　幅
+            <input type="number" value={form.game_area.w} onChange={(e) => setArea("w", e.target.value)} />
+            　高さ
+            <input type="number" value={form.game_area.h} onChange={(e) => setArea("h", e.target.value)} />
+          </div>
+          <div className="small">
+            配信の画面を 1920×1080 としたときの位置です。ゲーム画面は 16:9 にしてください。状態のページのプレビューに、切り出したゲーム画面が表示されます
+          </div>
+        </label>
       </Section>
 
       <Section id="server" title="接続">
@@ -155,7 +194,7 @@ export default function SettingsPage() {
       <Section id="record" title="録画と検出ログ">
         <label>
           <input type="checkbox" checked={form.record} onChange={(e) => set("record", e.target.checked)} /> フレームを録画する
-          <span className="small">　samples/record に 0.5 秒ごとのゲーム画面を保存します</span>
+          <span className="small">　0.5 秒ごとのゲーム画面を保存します（保存先は状態のページに表示されます）</span>
         </label>
         <label>
           録画の上限（GB）

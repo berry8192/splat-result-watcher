@@ -32,9 +32,15 @@ pub const SLOW_CAPTURE_MS: f64 = 60.0;
 pub const NO_SIGNAL_DARK: f64 = 0.98;
 
 /// 見本の置き場所。repo の `samples/`（git 管理外。ゲーム画面の切り抜きは同梱しない）。
-/// exe をどこから起動しても同じ所に貯まるよう、ビルドしたときの repo の場所を使う
+/// exe をどこから起動しても同じ所に貯まるよう、ビルドしたときの repo の場所を使う。
+/// 配布した exe のように repo が無い PC では `%LOCALAPPDATA%\splat-result-watcher\samples`
 pub fn samples_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("samples")
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if repo.join("Cargo.toml").is_file() {
+        repo.join("samples")
+    } else {
+        data_dir().join("samples")
+    }
 }
 
 /// 利用者ごとのファイル（出来事の控え・登録した見本・閉じ損ねたプロジェクターの控え）の置き場所
