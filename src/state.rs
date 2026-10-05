@@ -119,8 +119,11 @@ pub enum Seen {
     UdemaeScreen { mode: Option<Mode> },
     /// 昇格の画面「300p ウデマエポイントはリセットされます」
     UdemaeReset(i32),
-    /// 試合と結び付かない、今見えた自分の値（`wins` / `losses` は進行が見えたときだけ）
-    Observed { what: Observed, wins: Option<u8>, losses: Option<u8> },
+    /// 試合と結び付かない、今見えた自分の値（`wins` / `losses` は進行が見えたときだけ）。
+    /// `lobby` はメニューで選んでいるモードとルール（読めたときだけ）
+    Observed { what: Observed, wins: Option<u8>, losses: Option<u8>, lobby: Option<(Mode, Rule)> },
+    /// ロビーのメニューで選んでいるモードとルール（値の出ないオープン・ナワバリや、値がまだ読めないとき）
+    Lobby { mode: Mode, rule: Rule },
     /// 進行の「WIN LOSE n - m」。`stamps` は WIN の判子の数（読めたときだけ）
     /// `mode` はパネルの左上の黄色い札（「チャレンジ」「昇格戦」）で分かるモード（札があればバンカラ、無ければ X）
     Progress { wins: u8, losses: u8, stamps: Option<u8>, mode: Option<Mode> },
@@ -361,6 +364,9 @@ pub struct Machine {
     /// 今見えた自分の値（比べやすいよう 0.1 刻みの整数にしたもの）と、最後に出したもの
     observed: Settle<ObservedKey>,
     observed_sent: Option<ObservedKey>,
+    /// メニューで選んでいるモードとルールと、最後に出したもの（試合を始めると出し直せるよう忘れる）
+    lobby: Settle<(Mode, Rule)>,
+    lobby_sent: Option<(Mode, Rule)>,
     /// 勝敗の画面が映っている一続き（始まり, 最後に見た時刻）と、それが久しぶりに映ったものか
     episode: Option<(DateTime<Utc>, DateTime<Utc>)>,
     episode_fresh: bool,
@@ -403,6 +409,8 @@ impl Machine {
             last_rule: None,
             observed: Settle::new(STABLE),
             observed_sent: None,
+            lobby: Settle::new(STABLE),
+            lobby_sent: None,
             episode: None,
             episode_fresh: false,
             serial: 0,
@@ -494,7 +502,7 @@ impl Machine {
             .filter(|(_, t)| rotation_slot(*t) == rotation_slot(at))
             .map(|(r, _)| r);
         let ob = match &seen {
-            Seen::Observed { what, wins, losses } | Seen::MatchingValue { what, wins, losses, .. } => Some(match what {
+            Seen::Observed { what, wins, losses, .. } | Seen::MatchingValue { what, wins, losses, .. } => Some(match what {
                 Observed::X { rule, value } => (true, rule.or(slot_rule), value.map(tenths), *wins, *losses),
                 Observed::Udemae { value } => (false, None, value.map(|v| v as i64 * 10), *wins, *losses),
             }),
@@ -516,6 +524,17 @@ impl Machine {
             }
             out.push(ev);
             self.observed_sent = self.observed.latest;
+        }
+
+        // メニューで選んでいるモードとルール: 落ち着いて、前に出したものと違えば出す。試合中は出さない
+        let lb = match &seen {
+            Seen::Lobby { mode, rule } | Seen::Observed { lobby: Some((mode, rule)), .. } => Some((*mode, *rule)),
+            _ => None,
+        };
+        if self.lobby.push(lb) && !in_battle && self.lobby.latest != self.lobby_sent {
+            let (mode, rule) = self.lobby.latest.unwrap();
+            out.push(json!({"type": "lobby", "mode": mode.as_str(), "rule": rule.as_str(), "at": time(at)}));
+            self.lobby_sent = self.lobby.latest;
         }
 
         // ルール紹介: 新しい試合（ちらついて 2 回落ち着いたものは同じ試合）
@@ -549,7 +568,11 @@ impl Machine {
                     .pending_mode
                     .take()
                     .filter(|(_, t)| at - *t <= Duration::seconds(MATCHING_FRESH))
-                    .map(|(m, _)| m);
+                    .map(|(m, _)| m)
+                    // マッチングが映らなかった（オープンなど）ときは、メニューで選んでいたモード（ルールが同じときだけ）
+                    .or(self.lobby.latest.filter(|(_, lr)| Some(*lr) == r && *lr != Rule::TurfWar).map(|(m, _)| m));
+                // 試合の後にメニューへ戻ったら、同じ選択でも出し直す
+                self.lobby_sent = None;
                 let mut ev = json!({"type": "battle_started", "match_id": g.id, "at": time(at)});
                 if r == Some(Rule::TurfWar) {
                     ev["mode"] = Mode::Other.as_str().into();
@@ -1262,11 +1285,29 @@ mod tests {
     }
 
     #[test]
+    fn lobby_is_sent_when_the_selection_changes_and_fills_the_mode_of_the_next_battle() {
+        let mut r = Run::new();
+        let open = Seen::Lobby { mode: Mode::BankaraOpen, rule: Rule::Asari };
+        r.feed(open.clone(), 4).feed(Seen::Unknown, 2).feed(open.clone(), 4);
+        let lb = r.of("lobby");
+        assert_eq!(lb.len(), 1);
+        assert_eq!((lb[0]["mode"].as_str(), lb[0]["rule"].as_str()), (Some("bankara_open"), Some("asari")));
+        // マッチングが映らなくても、試合はメニューで選んでいたモード
+        r.intro(Rule::Asari);
+        let b = r.of("battle_started");
+        assert_eq!(b[0]["mode"], "bankara_open");
+        // 試合の後でメニューに戻れば、同じ選択でも出し直す
+        r.feed(win(), 6).wait(30).feed(open, 4);
+        assert_eq!(r.of("lobby").len(), 2);
+    }
+
+    #[test]
     fn observed_values_are_sent_once_when_they_change() {
         let ox = |v: f64, w: Option<u8>, l: Option<u8>| Seen::Observed {
             what: Observed::X { rule: Some(Rule::Hoko), value: Some(v) },
             wins: w,
             losses: l,
+            lobby: None,
         };
         let mut r = Run::new();
         // メニューを開いている間ずっと同じ値 → 1 回だけ
@@ -1278,7 +1319,7 @@ mod tests {
         assert!(o[0].get("match_id").is_none());
         // 進行が変わったら出す。ウデマエ（参加費の前の値）は整数
         r.feed(ox(1983.5, Some(2), Some(0)), 4);
-        r.feed(Seen::Observed { what: Observed::Udemae { value: Some(-40) }, wins: None, losses: None }, 4);
+        r.feed(Seen::Observed { what: Observed::Udemae { value: Some(-40) }, wins: None, losses: None, lobby: None }, 4);
         let o = r.of("observed");
         assert_eq!(o.len(), 3);
         assert_eq!((o[2]["kind"].as_str(), o[2]["value"].as_i64()), (Some("udemae"), Some(-40)));
@@ -1291,7 +1332,7 @@ mod tests {
 
     #[test]
     fn menu_x_power_gets_the_rule_of_the_same_rotation() {
-        let menu = |v: f64| Seen::Observed { what: Observed::X { rule: None, value: Some(v) }, wins: None, losses: None };
+        let menu = |v: f64| Seen::Observed { what: Observed::X { rule: None, value: Some(v) }, wins: None, losses: None, lobby: None };
         // 12:00 UTC（21:00 日本時間）の枠: 11:00〜13:00 UTC。ヤグラの試合の後のメニュー
         let mut r = Run::new();
         r.intro(Rule::Yagura).feed(win(), 6).wait(200);

@@ -8,6 +8,8 @@
 //! - 結果の帯のモード: 白い文字の幅（「Xマッチ」は短く、「バンカラマッチ（…）」は長い）
 //! - マッチング: 左上の「マッチメイク中…」のかたまりの並びと、ルール名の色（X は青緑、バンカラはオレンジ）
 //! - ロビーのメニュー: 見出しの色（X は青緑、ウデマエはオレンジ）。数字の形式は recognize.rs で見る
+//! - メニューで選んでいるモード: 左の大きなカードの色（X は青緑、バンカラは橙、レギュラーは黄緑）と、「（チャレンジ）」の字の幅。
+//!   ルール: 右下の欄の色付きの字の幅（5 文字か 7 文字か）と、5 文字なら後ろの 3 文字をゴシック体の語と比べる
 //! - ルール紹介: 真ん中の黒いしぶきの白い文字を、Windows のゴシック体で書いた 4 つの語と比べる（フォントは同梱しない）
 
 use std::sync::OnceLock;
@@ -495,10 +497,16 @@ fn words() -> &'static Vec<Vec<Vec<bool>>> {
 
 /// 白い字を書いた語と比べ、語ごとの似ている度合い（フォントの平均）。白が無ければ None
 fn compare(img: &RgbImage, roi: Roi, sets: &[Vec<Vec<bool>>]) -> Option<Vec<f64>> {
+    compare_by(img, roi, sets, white)
+}
+
+/// `pred` に合う画素を字として、書いた語と比べる
+fn compare_by(img: &RgbImage, roi: Roi, sets: &[Vec<Vec<bool>>], pred: impl Fn([u8; 3]) -> bool) -> Option<Vec<f64>> {
     let (x0, y0, w, h) = roi.scaled(img.width());
+    let (w, h) = (w.min(img.width().saturating_sub(x0)), h.min(img.height().saturating_sub(y0)));
     let px: Vec<bool> = (y0..y0 + h)
         .flat_map(|y| (x0..x0 + w).map(move |x| (x, y)))
-        .map(|(x, y)| white(img.get_pixel(x, y).0))
+        .map(|(x, y)| pred(img.get_pixel(x, y).0))
         .collect();
     let g = fit(&px, w as usize, h as usize)?;
     let n = sets.first()?.len();
@@ -550,6 +558,212 @@ pub fn rule_intro(img: &RgbImage) -> Option<Rule> {
     let mut sc: Vec<(Rule, f64)> = WORDS.iter().zip(s2).map(|((r, _), v)| (*r, v)).collect();
     sc.sort_by(|a, b| b.1.total_cmp(&a.1));
     (sc[0].1 >= WORD_MIN && sc[0].1 - sc[1].1 >= WORD_MARGIN).then_some(sc[0].0)
+}
+
+// ---- ロビーのメニューで選んでいるモードとルール ----
+
+/// 選んでいるモードの大きなカードの上の方（字の来ない所）。X は青緑、バンカラは橙、レギュラーは黄緑
+const MENU_CARD: Roi = Roi::new(448, 318, 232, 32);
+/// カードの「（チャレンジ）」「（オープン）」の行（橙の地に黒い字）
+const MENU_CARD_SUB: Roi = Roi::new(450, 424, 170, 50);
+/// 右下の「ルール」欄のルール名（色の付いた字）
+const MENU_RULE: Roi = Roi::new(1090, 476, 260, 48);
+/// ルール名の下の「ステージ」の行（暗いパネルに白い字）。ルール名の欄に試合のインクや結果の画面が映ったものを除く
+const MENU_PANEL: Roi = Roi::new(1095, 530, 240, 36);
+/// 5 文字のルール名（「ガチエリア」「ガチヤグラ」「ガチアサリ」）は、頭の「ガチ」が同じなので後ろの 3 文字で比べる。
+/// 7 文字（「ガチホコバトル」「ナワバリバトル」）は幅で分かり、どちらかはカードの色（レギュラーかどうか）で決まる
+const MENU_RULE_TAILS: [(Rule, &str); 3] = [(Rule::Area, "エリア"), (Rule::Yagura, "ヤグラ"), (Rule::Asari, "アサリ")];
+/// ルール名の字の幅÷高さ。5 文字と 7 文字の間
+const MENU_RULE_LONG: f64 = 5.0;
+/// 「（チャレンジ）」と「（オープン）」の字の幅（ROI の幅に対する割合）の間（手元でチャレンジ 0.76〜0.77、オープン 0.65。
+/// 高さは ROI の端で切れてばらつくので、幅だけで見る）
+const MENU_SUB_WIDE: f64 = 0.71;
+/// カードの色が占める割合の下限
+pub const MENU_CARD_MIN: f64 = 0.5;
+/// 「ステージ」の行の暗い所の割合の下限
+const MENU_PANEL_DARK: f64 = 0.4;
+/// 後ろの 3 文字の一番近い語の下限と、2 番目との差
+pub const MENU_RULE_MIN: f64 = 0.3;
+pub const MENU_RULE_MARGIN: f64 = 0.02;
+
+/// レギュラーマッチの黄緑
+fn lime([r, g, b]: [u8; 3]) -> bool {
+    let (r, g, b) = (r as i32, g as i32, b as i32);
+    g >= 150 && g >= r && b * 2 < g && r * 10 >= g * 4
+}
+
+/// 色の付いた明るい字（ルール名。X は緑、バンカラは橙）
+fn vivid([r, g, b]: [u8; 3]) -> bool {
+    let (mx, mn) = (r.max(g).max(b), r.min(g).min(b));
+    mx >= 150 && mx - mn >= 90
+}
+
+/// 暗い字（カードの上の黒い字）
+fn ink([r, g, b]: [u8; 3]) -> bool {
+    r.max(g).max(b) < 70
+}
+
+fn menu_tail_words() -> &'static Vec<Vec<Vec<bool>>> {
+    static W: OnceLock<Vec<Vec<Vec<bool>>>> = OnceLock::new();
+    W.get_or_init(|| rendered(&MENU_RULE_TAILS.map(|(_, w)| w)))
+}
+
+/// `pred` に合う画素の字。外接の箱（x0, y0, 幅, 高さ）と、ROI の中の白黒の絵（ROI の幅×高さ）
+struct Ink {
+    px: Vec<bool>,
+    w: usize,
+    bbox: (usize, usize, usize, usize),
+}
+
+/// 小さな点（ぼけた縁・飾り）は外して、外接の箱を測る。列ごとに 2 画素以上ある所だけを字とみる
+fn ink_of(img: &RgbImage, roi: Roi, pred: impl Fn([u8; 3]) -> bool) -> Option<Ink> {
+    let (x0, y0, w, h) = roi.scaled(img.width());
+    let (w, h) = (w.min(img.width().saturating_sub(x0)) as usize, h.min(img.height().saturating_sub(y0)) as usize);
+    let px: Vec<bool> = (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .map(|(x, y)| pred(img.get_pixel(x0 + x as u32, y0 + y as u32).0))
+        .collect();
+    let cols: Vec<bool> = (0..w).map(|x| (0..h).filter(|y| px[y * w + x]).count() >= 2).collect();
+    let rows: Vec<bool> = (0..h).map(|y| (0..w).filter(|x| px[y * w + x]).count() >= 2).collect();
+    let (bx0, bx1) = (cols.iter().position(|c| *c)?, cols.iter().rposition(|c| *c)?);
+    let (by0, by1) = (rows.iter().position(|c| *c)?, rows.iter().rposition(|c| *c)?);
+    Some(Ink { px, w, bbox: (bx0, by0, bx1 - bx0 + 1, by1 - by0 + 1) })
+}
+
+impl Ink {
+    fn aspect(&self) -> f64 {
+        self.bbox.2 as f64 / self.bbox.3 as f64
+    }
+
+    /// 箱の横 `from`〜1 の所を、書いた語と比べる
+    fn compare_tail(&self, from: f64, sets: &[Vec<Vec<bool>>]) -> Option<Vec<f64>> {
+        let (bx, by, bw, bh) = self.bbox;
+        let sx = bx + (bw as f64 * from) as usize;
+        let sw = bx + bw - sx;
+        let sub: Vec<bool> = (0..bh).flat_map(|y| (0..sw).map(move |x| (x, y))).map(|(x, y)| self.px[(by + y) * self.w + sx + x]).collect();
+        let g = fit(&sub, sw, bh)?;
+        let n = sets.first()?.len();
+        Some((0..n).map(|i| sets.iter().map(|s| iou(&g, &s[i])).sum::<f64>() / sets.len() as f64).collect())
+    }
+}
+
+/// 一番近いものの番号と、その度合い・2 番目との差
+fn best(scores: &[f64]) -> Option<(usize, f64, f64)> {
+    let mut idx: Vec<usize> = (0..scores.len()).collect();
+    idx.sort_by(|a, b| scores[*b].total_cmp(&scores[*a]));
+    let (a, b) = (*idx.first()?, idx.get(1).copied());
+    Some((a, scores[a], b.map_or(scores[a], |b| scores[a] - scores[b])))
+}
+
+/// メニューのルール名。`regular` はレギュラーマッチのカードか（7 文字のルール名を決める）
+fn menu_rule(img: &RgbImage, regular: bool) -> Option<Rule> {
+    let v = ratio(img, MENU_RULE, vivid);
+    if !(0.08..=0.6).contains(&v) {
+        return None;
+    }
+    let ink = ink_of(img, MENU_RULE, vivid)?;
+    // ルール名は欄の左にそろい（手元で左端は ROI の 0.04〜0.07）、背は ROI の半分ほど
+    let (left, tall) = (ink.bbox.0 as f64 / ink.w as f64, ink.bbox.3 as f64 / (ink.px.len() / ink.w) as f64);
+    if left > 0.12 || !(0.3..=0.75).contains(&tall) {
+        return None;
+    }
+    if ink.aspect() >= MENU_RULE_LONG {
+        return Some(if regular { Rule::TurfWar } else { Rule::Hoko });
+    }
+    if regular {
+        return None;
+    }
+    // 「ガチ」は 5 文字のうち 2 文字
+    let (i, s, margin) = best(&ink.compare_tail(0.4, menu_tail_words())?)?;
+    (s >= MENU_RULE_MIN && margin >= MENU_RULE_MARGIN).then_some(MENU_RULE_TAILS[i].0)
+}
+
+/// 右下のパネル: 「ステージ」の行が暗い地に白い字
+fn menu_panel(img: &RgbImage) -> bool {
+    let (d, w) = (ratio(img, MENU_PANEL, neutral_dark), ratio(img, MENU_PANEL, white));
+    d >= MENU_PANEL_DARK && (0.02..=0.3).contains(&w)
+}
+
+/// ロビーのメニューで選んでいるモードとルール。カードの色とルール名が両方決まったときだけ
+/// （ルール名の欄がメニューの手がかりを兼ねる）。イベントなど、ほかの色のカードは None
+pub fn menu_selection(img: &RgbImage) -> Option<(Mode, Rule)> {
+    if !menu_panel(img) {
+        return None;
+    }
+    let (t, o, l) = (ratio(img, MENU_CARD, teal), ratio(img, MENU_CARD, orange), ratio(img, MENU_CARD, lime));
+    let mode = if t >= MENU_CARD_MIN {
+        Mode::X
+    } else if o >= MENU_CARD_MIN {
+        let sub = ink_of(img, MENU_CARD_SUB, ink)?;
+        if sub.bbox.2 as f64 / sub.w as f64 >= MENU_SUB_WIDE {
+            Mode::BankaraChallenge
+        } else {
+            Mode::BankaraOpen
+        }
+    } else if l >= MENU_CARD_MIN {
+        Mode::Other
+    } else {
+        return None;
+    };
+    Some((mode, menu_rule(img, mode == Mode::Other)?))
+}
+
+/// メニューの決まりごとで測った値（`SRW_IMGS=a.png;b.jpg cargo test --release -- --ignored measure_menu --nocapture`）
+#[test]
+#[ignore]
+fn measure_menu() {
+    let list = std::env::var("SRW_IMGS").unwrap_or_default();
+    for p in list.split(';').filter(|p| !p.is_empty()) {
+        let img = image::open(p).unwrap().to_rgb8();
+        let img = image::imageops::resize(&img, 1024, 576, image::imageops::FilterType::Triangle);
+        let card = (ratio(&img, MENU_CARD, teal), ratio(&img, MENU_CARD, orange), ratio(&img, MENU_CARD, lime));
+        let rule = ink_of(&img, MENU_RULE, vivid);
+        let tail = rule.as_ref().and_then(|r| r.compare_tail(0.4, menu_tail_words()));
+        let sub = ink_of(&img, MENU_CARD_SUB, ink);
+        println!(
+            "{p}
+  card t/o/l {:.2}/{:.2}/{:.2}  vivid {:.2}  panel dark/white {:.2}/{:.2}",
+            card.0,
+            card.1,
+            card.2,
+            ratio(&img, MENU_RULE, vivid),
+            ratio(&img, MENU_PANEL, neutral_dark),
+            ratio(&img, MENU_PANEL, white)
+        );
+        println!(
+            "  rule aspect {:?} box {:?} tail {:?}
+  sub width {:?} box {:?}
+  => {:?}",
+            rule.as_ref().map(|r| format!("{:.2}", r.aspect())),
+            rule.as_ref().map(|r| r.bbox),
+            tail.map(|v| v.iter().map(|x| format!("{x:.2}")).collect::<Vec<_>>()),
+            sub.as_ref().map(|r| format!("{:.2}", r.bbox.2 as f64 / r.w as f64)),
+            sub.as_ref().map(|r| r.bbox),
+            menu_selection(&img)
+        );
+    }
+}
+
+/// フォルダの画像のうち、メニューと読んだものを並べる（`SRW_DIRS=a;b cargo test --release -- --ignored menu_in_dirs --nocapture`）
+#[test]
+#[ignore]
+fn menu_in_dirs() {
+    let dirs = std::env::var("SRW_DIRS").unwrap_or_default();
+    let (mut all, mut hit) = (0, 0);
+    for d in dirs.split(';').filter(|p| !p.is_empty()) {
+        let mut files: Vec<_> = std::fs::read_dir(d).unwrap().filter_map(|e| e.ok().map(|e| e.path())).collect();
+        files.sort();
+        for p in files.iter().filter(|p| p.extension().is_some_and(|e| e == "png" || e == "jpg")) {
+            let img = image::open(p).unwrap().to_rgb8();
+            let img = image::imageops::resize(&img, 1024, 576, image::imageops::FilterType::Triangle);
+            all += 1;
+            if let Some(s) = menu_selection(&img) {
+                hit += 1;
+                println!("{:?}  {}", s, p.file_name().unwrap().to_string_lossy());
+            }
+        }
+    }
+    println!("{hit} / {all}");
 }
 
 /// 手元の見本（samples/snaps）で、全部の決まりごとの当たり外れを見る

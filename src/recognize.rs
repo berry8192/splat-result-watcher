@@ -430,13 +430,26 @@ impl Recognizer {
             return Seen::UdemaeScreen { mode };
         }
 
-        // ロビーのメニューに出ている自分の値（observed）
+        // ロビーのメニューに出ている自分の値（observed）と、選んでいるモードとルール（lobby）
+        let lobby = shapes::menu_selection(work);
+        if let Some((m, r)) = lobby {
+            notes.text.push(format!("メニュー: {} {}", m.as_str(), r.as_str()));
+        }
         for menu in [Self::menu_x, Self::menu_udemae] {
             match menu(self, work, notes) {
-                Some(Some((what, wins, losses))) => return Seen::Observed { what, wins, losses },
-                Some(None) => return Seen::Unknown,
+                Some(Some((mut what, wins, losses))) => {
+                    // X パワーはルールごとなので、メニューのルールを付ける
+                    if let (Observed::X { rule, .. }, Some((Mode::X, r))) = (&mut what, lobby) {
+                        *rule = Some(r);
+                    }
+                    return Seen::Observed { what, wins, losses, lobby };
+                }
+                Some(None) => break,
                 None => {}
             }
+        }
+        if let Some((mode, rule)) = lobby {
+            return Seen::Lobby { mode, rule };
         }
 
         // 試合後の進行の画面: 勝ち負けは数字ではなく、○の判子とイカの色で数える（数字は判子の後から変わる）
@@ -653,9 +666,9 @@ mod with_samples {
             Seen::MatchingValue { mode: Mode::BankaraChallenge, what: Observed::Udemae { value: Some(130) }, wins: None, losses: None }
         );
         // メニューの値（手元の見本では字がそろわないので、見本にした画面を読んで仕組みが通るかだけ確かめる）
-        let menu_x = Seen::Observed { what: Observed::X { rule: None, value: Some(2100.0) }, wins: Some(0), losses: Some(0) };
+        let menu_x = Seen::Observed { what: Observed::X { rule: Some(Rule::Yagura), value: Some(2100.0) }, wins: Some(0), losses: Some(0), lobby: Some((Mode::X, Rule::Yagura)) };
         assert_eq!(see("031924"), menu_x, "{}", why("031924"));
-        let menu_ud = Seen::Observed { what: Observed::Udemae { value: Some(1051) }, wins: Some(0), losses: Some(0) };
+        let menu_ud = Seen::Observed { what: Observed::Udemae { value: Some(1051) }, wins: Some(0), losses: Some(0), lobby: Some((Mode::BankaraChallenge, Rule::Asari)) };
         assert_eq!(see("041221"), menu_ud, "{}", why("041221"));
         // 進行の画面（勝ち負けは色で数える。見本にしたのは 032850 の「WIN LOSE」の見出しだけ）
         // 進行の見本のモード（032900 は X、ほかはバンカラのチャレンジ・昇格戦）
@@ -669,8 +682,10 @@ mod with_samples {
         assert_eq!(mm(see("040151")), Seen::Matching(Mode::BankaraChallenge));
         // メニュー・順位・試合中（無効試合の札・バトル中・Finish!）・X に挑戦できる・進行
         let quiet = [
-            "033416", "042113", "041735", "041804", "134014", "134030", "134042", "134056",
+            "033416", "042113", "041735", "134014", "134030", "134042", "134056",
         ];
+        // 計測中の X のメニュー（値は出ないが、選んでいるモードとルールは読む）
+        assert_eq!(see("041804"), Seen::Lobby { mode: Mode::X, rule: Rule::Area }, "{}", why("041804"));
         // X のセット完了の画面（「3 - 0」と WIN の札が並ぶ）を、進行の画面と取り違えない
         assert!(matches!(see("033100"), Seen::XPower { .. }), "{}", why("033100"));
         for key in quiet {
