@@ -12,7 +12,7 @@ WebSocket（既定 `ws://127.0.0.1:3140/events`）で流す単独アプリ。受
 ## 動かし方
 - `npm --prefix ui install`（初回だけ）→ `npm --prefix ui run build` → `cargo build --release`
   （GUI の画面 `ui/dist` を exe に埋め込むので、先に画面を組む。撮影・縮小は debug だと遅い。依存は debug でも最適化してある）
-- `target/release/splat-result-watcher-gui.exe` … GUI。起動すると撮影・照合・WebSocket が回る。字だけの見せる窓（枠なし。配信ソフトのウィンドウキャプチャで載せる前提。左ドラッグで動かし、右クリックで横長・縦長・背景色（透明も）・設定・終了。字の大きさは設定の窓の「見せる窓」。窓の大きさは中身に合わせて変わる。同梱の M PLUS 1p（OFL、`ui/public/fonts`）で描く）と、設定・見本の窓（状態・そろい具合・見本の登録・設定）。見本の登録は直近の画面（メモリに JPEG で最大 200MB・30 分。バトル中は 5 秒に 1 枚、結果〜試合後は 0.2 秒ごと）からシークバーで選べる。設定は `%LOCALAPPDATA%\splat-result-watcher\settings.json`（serve も既定として読む）。起動は 1 つだけ。記録は `logs\日付.log`（段階ごとの一番高い一致度つき）
+- `target/release/splat-result-watcher-gui.exe` … GUI。起動すると撮影・照合・WebSocket が回る。字だけの見せる窓（枠なし。配信ソフトのウィンドウキャプチャで載せる前提。左ドラッグで動かし、右クリックで横長・縦長・背景色（透明も）・設定・終了。字の大きさは設定の窓の「見せる窓」。窓の大きさは中身に合わせて変わる。同梱の M PLUS 1p（OFL、`ui/public/fonts`）で描く）と、設定の窓（状態・テンプレートの状況・テンプレートの登録・設定）。画面の文言は落ち着いた文体で、独自の言い回し（見本・撮る・ゲーム穴 など）は使わず一般的な語（テンプレート・キャプチャ・ゲーム画面）にそろえる（2026-10-06 の利用者の指摘）。見本の登録は直近の画面（メモリに JPEG で最大 200MB・30 分。バトル中は 5 秒に 1 枚、結果〜試合後は 0.2 秒ごと）からシークバーで選べる。設定は `%LOCALAPPDATA%\splat-result-watcher\settings.json`（serve も既定として読む）。起動は 1 つだけ。記録は `logs\日付.log`（段階ごとの一番高い一致度つき）
 - デバッグ用の当たりの記録: `%LOCALAPPDATA%\splat-result-watcher\hits\YYYYMMDD\hits.jsonl`（1 行 1 件の JSON。何かに当たったフレームのうち中身が変わったものだけ。
   `seen`・`shapes`（形と色で見分けた見出し）・`numbers`（`text` は見本で読めた字、`guess` は推測）・`peaks`・`learned`・`events`・`image`）と、
   同じフォルダの `image` の JPEG（ゲーム穴）。上限 500MB で古い日から消す。設定の「当たりの記録を残す」で切れる（`src/hitlog.rs`）

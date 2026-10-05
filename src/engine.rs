@@ -194,7 +194,7 @@ impl Engine {
         rt.spawn(async move {
             if let Err(e) = server.serve(addr).await {
                 let msg = format!("{:#}", e);
-                s.log(format!("サーバが止まった: {msg}"));
+                s.log(format!("サーバーが停止しました: {msg}"));
                 s.snap.lock().unwrap().server_error = Some(msg);
             }
         });
@@ -298,8 +298,8 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
     let mut machine = Machine::new(Config::default());
     if let Ok(saved) = std::fs::read_to_string(game_path) {
         match machine.restore(&saved, Utc::now()) {
-            Some(id) => s.log(format!("途中の試合 {id} の続きから読む")),
-            None if !saved.contains("\"game\":null") => s.log("控えの試合は古いので捨てた".into()),
+            Some(id) => s.log(format!("中断していた試合 {id} の続きから再開")),
+            None if !saved.contains("\"game\":null") => s.log("保存されていた試合は古いため破棄".into()),
             None => {}
         }
     }
@@ -343,23 +343,23 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
                 cap_bytes: cfg.record_cap_bytes,
             }) {
                 Ok(r) => {
-                    s.log(format!("見本の録画を始めた: {}", r.session_dir.display()));
+                    s.log(format!("録画を開始: {}", r.session_dir.display()));
                     s.snap.lock().unwrap().record_dir = Some(r.session_dir.display().to_string());
                     recorder = Some(r);
                 }
                 Err(e) => {
-                    s.log(format!("見本の録画を始められない: {:#}", e));
+                    s.log(format!("録画を開始できません: {:#}", e));
                     s.record.store(false, Ordering::Relaxed);
                 }
             }
         } else if !want && recorder.is_some() {
             recorder = None;
-            s.log("見本の録画を止めた".into());
+            s.log("録画を停止".into());
             s.snap.lock().unwrap().record_dir = None;
         }
 
         if projector.as_ref().is_some_and(|p| !p.alive()) {
-            s.log("撮る口が消えた。開き直す".into());
+            s.log("キャプチャ元が失われました。再接続します".into());
             projector = None;
         }
         if projector.is_none() && last_open_try.is_none_or(|t| t.elapsed() >= Duration::from_secs(5)) {
@@ -368,19 +368,19 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
             last_open_try = Some(Instant::now());
             match opened {
                 Ok(p) => {
-                    s.log(format!("{} から撮る", p.name()));
+                    s.log(format!("{} からキャプチャを開始", p.name()));
                     projector = Some(p);
                     next = Instant::now() + Duration::from_millis(500);
                     continue;
                 }
-                Err(e) => s.log(format!("撮れない: {:#}", e)),
+                Err(e) => s.log(format!("キャプチャできません: {:#}", e)),
             }
         }
 
         if s.reset_game.swap(false, Ordering::Relaxed) {
             match machine.drop_game() {
-                Some(id) => s.log(format!("試合 {id} を手で捨てた")),
-                None => s.log("捨てる試合は無かった".into()),
+                Some(id) => s.log(format!("試合 {id} を手動で破棄")),
+                None => s.log("破棄する試合はありません".into()),
             }
         }
 
@@ -430,7 +430,7 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
                 reading
             }
             Some(Err(e)) => {
-                s.log(format!("撮影に失敗: {:#}。開き直す", e));
+                s.log(format!("キャプチャに失敗: {:#}。再接続します", e));
                 projector = None;
                 crate::recognize::Reading::no_signal()
             }
@@ -459,8 +459,8 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
             for l in learned {
                 let line = format!("{} の「{}」。{}", l.pool.dir_name(), l.label, l.why);
                 match r.templates_mut().add_auto(l.pool, &l.label, l.patch) {
-                    Ok(_) => s.log(format!("見本を自動で足した: {line}")),
-                    Err(e) => s.log(format!("見本を自動で足せない: {e:#}")),
+                    Ok(_) => s.log(format!("テンプレートを自動登録: {line}")),
+                    Err(e) => s.log(format!("テンプレートを自動登録できません: {e:#}")),
                 }
                 learned_notes.push(line);
             }
@@ -472,20 +472,20 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
         for ev in events {
             match s.server.publish(ev.clone()) {
                 Ok(seq) => {
-                    s.log(format!("出来事 #{seq}: {ev}"));
+                    s.log(format!("イベント #{seq}: {ev}"));
                     let mut evs = s.events.lock().unwrap();
                     let mut ev = ev;
                     ev["seq"] = seq.into();
                     evs.push_front(ev);
                     evs.truncate(KEEP_EVENTS);
                 }
-                Err(e) => s.log(format!("出来事を控えられない: {:#}", e)),
+                Err(e) => s.log(format!("イベントを記録できません: {:#}", e)),
             }
         }
         let saved = machine.save();
         if saved != last_saved {
             if let Err(e) = write_atomic(game_path, &saved) {
-                s.log(format!("今の試合を控えられない: {e}"));
+                s.log(format!("現在の試合を保存できません: {e}"));
             }
             last_saved = saved;
         }
@@ -493,10 +493,10 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
         if st != stage {
             if !peaks.is_empty() {
                 let list: Vec<String> = peaks.iter().map(|(p, (l, v))| format!("{p} {l} {v:.2}")).collect();
-                s.log(format!("{} の間の一番高い一致度: {}", if stage.is_empty() { "起動" } else { stage }, list.join(" / ")));
+                s.log(format!("{} の間の最高一致度: {}", if stage.is_empty() { "起動" } else { stage }, list.join(" / ")));
                 peaks.clear();
             }
-            s.log(format!("段階: {st}"));
+            s.log(format!("状態: {st}"));
             stage = st;
             s.server.set_stage(st);
         }
@@ -509,7 +509,7 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
             let avg = times.iter().sum::<f64>() / times.len() as f64;
             if interval == INTERVAL && avg > SLOW_CAPTURE_MS {
                 interval = SLOW_INTERVAL;
-                s.log(format!("撮影が重い（平均 {avg:.1}ms）ので 1 秒ごとに落とす"));
+                s.log(format!("キャプチャの負荷が高い（平均 {avg:.1}ms）ため 1 秒間隔に下げます"));
             }
             s.snap.lock().unwrap().capture_ms = avg;
             times.clear();
@@ -527,7 +527,7 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
         snap.seen = seen_text;
         snap.notes = reading.notes;
     }
-    s.log("止めます".into());
+    s.log("停止します".into());
     drop(projector);
     drop(recorder);
 }

@@ -3,16 +3,16 @@ import { invoke } from "@tauri-apps/api/core";
 
 /** どうそろうか */
 const HOW = {
-  shape: "見本が無くても形と色で読める。別の画面で確かめられたら自動で足す",
-  sum: "手がかりの数字で推測し、「動く前 + 増減 = 動いた後」が合ったら自動で足す",
-  same_value: "試合後の値とメニューの値が同じことで自動で足す",
-  manual: "手で登録する（「見本の登録」で、その画面を映して登録）",
+  shape: "テンプレートがなくても形状と色で判定できます。他の画面で裏付けが取れた時点で自動登録されます",
+  sum: "参照フォントで推定し、「変動前 + 増減 = 変動後」の計算が一致した時点で自動登録されます",
+  same_value: "試合後の値とメニューの値が一致することを根拠に自動登録されます",
+  manual: "手動で登録します（「テンプレートの登録」で、その画面を表示して登録）",
 };
 
 const have = (i) => i.manual + i.auto > 0;
 const missing = (s, pred) => s.items.filter((i) => !have(i) && pred(i));
 
-/** 画面ごとの状態: DONE（無いと読めないものが全部ある）/ WAIT（自動で足されるのを待つ）/ MANUAL（手で取る必要あり） */
+/** 画面ごとの状態: DONE（必須のテンプレートがそろっている）/ WAIT（自動登録待ち）/ MANUAL（手動登録が必要） */
 function status(s) {
   if (s.needs_manual) return "MANUAL";
   if (s.ready) return "DONE";
@@ -54,9 +54,9 @@ export default function MaterialsPage() {
     <div className="page materials">
       <div className="mat-sum">
         <span>
-          {manualCount === 0 ? "MANUAL は無し" : `MANUAL は ${manualCount} 件`}。{waitCount === 0 ? "WAIT も無し" : `WAIT は ${waitCount} 字（遊んでいるうちに足される）`}
+          MANUAL: {manualCount === 0 ? "なし" : `${manualCount} 件`}　WAIT: {waitCount === 0 ? "なし" : `${waitCount} 文字（プレイ中に自動登録されます）`}
         </span>
-        <span className="small">行を押すと、映し方と足され方が出る</span>
+        <span className="small">行をクリックすると詳細を表示します</span>
       </div>
       {list.map((s) => {
         const st = status(s);
@@ -77,13 +77,13 @@ export default function MaterialsPage() {
             </button>
             {open.has(s.name) && (
               <div className="mat-detail">
-                <div>映し方: {s.show}</div>
-                <div>読めるもの: {s.gives}</div>
+                <div>表示方法: {s.show}</div>
+                <div>取得できる情報: {s.gives}</div>
                 {hows.map((h) => (
-                  <div key={h}>足され方: {HOW[h]}</div>
+                  <div key={h}>登録方法: {HOW[h]}</div>
                 ))}
-                {optional.length > 0 && <div>無くても読めるもの（あると確か）: {optional.map((i) => i.name).join(" ")}</div>}
-                {wait.length > 0 && st !== "WAIT" && <div>待ち: {wait.map((i) => i.name).join(" ")}</div>}
+                {optional.length > 0 && <div>任意（あると精度が上がります）: {optional.map((i) => i.name).join(" ")}</div>}
+                {wait.length > 0 && st !== "WAIT" && <div>自動登録待ち: {wait.map((i) => i.name).join(" ")}</div>}
               </div>
             )}
           </div>

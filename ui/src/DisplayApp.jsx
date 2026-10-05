@@ -116,8 +116,8 @@ export default function DisplayApp() {
       items.push(await CheckMenuItem.new({ text: `背景: ${name}`, checked: d.bg === c, action: () => change({ bg: c }) }));
     }
     items.push(await PredefinedMenuItem.new({ item: "Separator" }));
-    items.push(await MenuItem.new({ text: "設定・見本を開く（字の大きさもここで）", action: () => invoke("open_settings") }));
-    items.push(await MenuItem.new({ text: "しまう", action: () => getCurrentWindow().minimize() }));
+    items.push(await MenuItem.new({ text: "設定を開く", action: () => invoke("open_settings") }));
+    items.push(await MenuItem.new({ text: "最小化", action: () => getCurrentWindow().minimize() }));
     items.push(await MenuItem.new({ text: "終了", action: () => getCurrentWindow().close() }));
     const menu = await Menu.new({ items });
     await menu.popup();
@@ -129,7 +129,7 @@ export default function DisplayApp() {
   const isBankara = mode != null && mode.startsWith("bankara");
   const power = isX ? xp : isBankara ? udemae : null;
   const showSet = set && mode !== "bankara_open" && mode !== "other";
-  const note = !s ? "" : !s.source ? "N Air か OBS が見つからない" : s.events.length === 0 ? "まだ試合を読んでいない" : "";
+  const note = !s ? "" : !s.source ? "N Air または OBS が見つかりません" : s.events.length === 0 ? "まだ試合を認識していません" : "";
   const powerEl = power != null && <Power power={power} isX={isX} isBankara={isBankara} size={d.font_power} />;
 
   return (

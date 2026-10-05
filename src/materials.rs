@@ -44,8 +44,8 @@ const DIGITS: &[&str] = &[];
 const SCREENS: &[Screen] = &[
     Screen {
         name: "ロビーのメニュー（X マッチ）",
-        show: "ロビーでマッチの選択を開き、X マッチにカーソルを合わせる（右上に「Xパワー : 2100.0」と○が出る）",
-        gives: "今の X パワーと勝ち負け（observed）",
+        show: "ロビーでマッチの選択を開き、X マッチにカーソルを合わせます（右上に「Xパワー : 2100.0」と○が表示されます）",
+        gives: "現在の X パワーとセットの勝敗（observed）",
         needs: &[
             Need { pool: Pool::MenuX, labels: &["x_power"], how: How::Shape, required: false },
             Need { pool: Pool::DigitMenu, labels: DIGITS, how: How::SameValue, required: true },
@@ -53,8 +53,8 @@ const SCREENS: &[Screen] = &[
     },
     Screen {
         name: "ロビーのメニュー（バンカラ）",
-        show: "ロビーでマッチの選択を開き、バンカラマッチ（チャレンジ）にカーソルを合わせる（右上に「ウデマエ」とポイント）",
-        gives: "今のウデマエポイントと勝ち負け（observed）",
+        show: "ロビーでマッチの選択を開き、バンカラマッチ（チャレンジ）にカーソルを合わせます（右上に「ウデマエ」とポイント）",
+        gives: "現在のウデマエポイントとセットの勝敗（observed）",
         needs: &[
             Need { pool: Pool::MenuUdemae, labels: &["udemae"], how: How::Shape, required: false },
             Need { pool: Pool::DigitMenu, labels: DIGITS, how: How::SameValue, required: true },
@@ -62,8 +62,8 @@ const SCREENS: &[Screen] = &[
     },
     Screen {
         name: "マッチング",
-        show: "マッチを始めて、メニューを開いたまま待つ（左のパネルにルール名と「Xパワー 2100.0」か「ウデマエ S130p」）",
-        gives: "これから始まる試合のモードと、今の X パワー・ウデマエポイント（observed）",
+        show: "マッチングを開始し、メニューを開いたまま待ちます（左のパネルにルール名と「Xパワー 2100.0」または「ウデマエ S130p」）",
+        gives: "これから始まる試合のモードと、現在の X パワー・ウデマエポイント（observed）",
         needs: &[
             Need { pool: Pool::Matching, labels: &["x", "bankara"], how: How::Shape, required: false },
             // 数字は X パワーの画面と同じ字体（大きな数字の見本を使う）
@@ -72,19 +72,19 @@ const SCREENS: &[Screen] = &[
     },
     Screen {
         name: "ルール紹介",
-        show: "試合の始まりに自動で出る（ルールは 4 種）",
-        gives: "試合の始まり（battle_started）とルール",
+        show: "試合開始時に自動で表示されます（ルールは 4 種）",
+        gives: "試合の開始（battle_started）とルール",
         needs: &[Need { pool: Pool::RuleIntro, labels: &["area", "yagura", "hoko", "asari"], how: How::Shape, required: false }],
     },
     Screen {
         name: "結果発表",
-        show: "試合の終わりに自動で出る（勝ちの「WIN!」と負けの「LOSE...」の両方）",
-        gives: "勝ち負け（result）",
+        show: "試合終了時に自動で表示されます（「WIN!」と「LOSE...」の両方）",
+        gives: "勝敗（result）",
         needs: &[Need { pool: Pool::Outcome, labels: &["win", "lose"], how: How::Shape, required: false }],
     },
     Screen {
-        name: "結果の帯（個人リザルト）",
-        show: "結果発表の後、左上に「Xマッチ」などとルール・ステージが出る画面（X とバンカラの両方）",
+        name: "個人リザルトの見出し",
+        show: "結果発表の後、左上に「Xマッチ」などのモードとルール・ステージが表示される画面（X とバンカラの両方）",
         gives: "モード（X かバンカラか）とルール",
         needs: &[
             Need { pool: Pool::Mode, labels: &["x", "bankara_challenge"], how: How::Shape, required: false },
@@ -93,7 +93,7 @@ const SCREENS: &[Screen] = &[
     },
     Screen {
         name: "X パワーの変動",
-        show: "X マッチを 3 勝か 3 敗で終えた後（X パワーが数え上がり、右に青緑のしぶきで増減）",
+        show: "X マッチを 3 勝または 3 敗で終えた後（X パワーがカウントアップし、右側に増減が表示されます）",
         gives: "X パワーの変動（power）",
         needs: &[
             Need { pool: Pool::PowerLabel, labels: &["x_power"], how: How::Shape, required: false },
@@ -103,7 +103,7 @@ const SCREENS: &[Screen] = &[
     },
     Screen {
         name: "ウデマエの精算",
-        show: "バンカラマッチ（チャレンジ）を終えた後（灰色のゲージとポイント、TOTAL）",
+        show: "バンカラマッチ（チャレンジ）を終えた後（灰色のゲージとポイント、TOTAL が表示されます）",
         gives: "ウデマエポイントの変動（power）",
         needs: &[
             Need { pool: Pool::DigitGauge, labels: DIGITS, how: How::Sum, required: true },
@@ -114,13 +114,13 @@ const SCREENS: &[Screen] = &[
     Screen {
         name: "昇格",
         show: "昇格戦に勝ったとき（「昇格おめでとう!!」と「300p ウデマエポイントはリセットされます」）",
-        gives: "昇格でポイントが 300p に戻ったこと",
+        gives: "昇格によりポイントが 300p に戻ったこと",
         needs: &[Need { pool: Pool::UdemaeTitle, labels: &["promoted"], how: How::Manual, required: true }],
     },
     Screen {
-        name: "進行（WIN LOSE）",
-        show: "X マッチ・チャレンジの各試合の後（○の判子とイカが並ぶ画面）",
-        gives: "今のセットの勝ち負けの数（set_progress）",
+        name: "セット進行（WIN LOSE）",
+        show: "X マッチ・チャレンジの各試合の後（○のスタンプとイカが並ぶ画面）",
+        gives: "現在のセットの勝敗数（set_progress）",
         needs: &[Need { pool: Pool::ProgressLabel, labels: &["win_lose"], how: How::Manual, required: true }],
     },
 ];

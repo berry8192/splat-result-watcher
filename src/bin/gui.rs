@@ -89,7 +89,7 @@ async fn open_settings(app: AppHandle) -> Res<()> {
         return w.set_focus().map_err(err);
     }
     WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("index.html#settings".into()))
-        .title("splat-result-watcher - 設定・見本")
+        .title("splat-result-watcher - 設定")
         .inner_size(1280.0, 860.0)
         .build()
         .map_err(err)?;

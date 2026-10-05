@@ -5,7 +5,7 @@ const STAGE_NAMES = {
   no_signal: "映像なし",
   idle: "待機",
   in_battle: "バトル中",
-  reading: "結果を読み中",
+  reading: "結果を認識中",
   post_match: "試合後",
 };
 
@@ -20,9 +20,9 @@ function describe(ev) {
       if (ev.calibrating) return `${ev.kind} 計測中`;
       return `${ev.kind} ${ev.before ?? "?"} → ${ev.after}`;
     case "set_progress":
-      return `進行 ${ev.wins}-${ev.losses}`;
+      return `セット進行 ${ev.wins}-${ev.losses}`;
     case "observed":
-      return `見えた値 ${ev.kind} ${ev.value}${ev.wins != null ? `（${ev.wins}-${ev.losses}）` : ""}`;
+      return `観測値 ${ev.kind} ${ev.value ?? ""}${ev.wins != null ? `（${ev.wins}-${ev.losses}）` : ""}`;
     default:
       return ev.type;
   }
@@ -60,10 +60,10 @@ export default function StatusPage() {
     <div className="page status">
       <div className="row">
         <div className="col preview">
-          {frame ? <img src={frame} alt="ゲーム穴" /> : <div className="noframe">まだ撮れていない</div>}
+          {frame ? <img src={frame} alt="ゲーム画面" /> : <div className="noframe">まだキャプチャできていません</div>}
           <div className="seen">
             <div>
-              見えたもの: <b>{s.seen}</b>
+              認識結果: <b>{s.seen}</b>
             </div>
             {s.notes.map((n, i) => (
               <div key={i} className="note">
@@ -79,7 +79,7 @@ export default function StatusPage() {
               <tr>
                 <th>待ち受け</th>
                 <td>
-                  {s.addr}（つながっている {s.clients}）
+                  {s.addr}（接続 {s.clients}）
                 </td>
               </tr>
               {s.server_error && (
@@ -89,31 +89,31 @@ export default function StatusPage() {
                 </tr>
               )}
               <tr>
-                <th>撮影</th>
+                <th>キャプチャ</th>
                 <td>
-                  {s.source ? `${s.source} から撮れている` : "撮れていない（N Air か OBS を起動する）"}・平均 {s.capture_ms.toFixed(1)}ms・
-                  {s.interval_ms}ms ごと
+                  {s.source ? `${s.source} からキャプチャ中` : "キャプチャできていません（N Air または OBS を起動してください）"}・平均 {s.capture_ms.toFixed(1)}ms・
+                  {s.interval_ms}ms 間隔
                 </td>
               </tr>
               <tr>
-                <th>最後の seq</th>
+                <th>最新の seq</th>
                 <td>{s.last_seq}</td>
               </tr>
               <tr>
-                <th>見本の録画</th>
+                <th>録画</th>
                 <td>
                   <label>
                     <input type="checkbox" checked={s.record} onChange={(e) => invoke("set_record", { on: e.target.checked })} />{" "}
-                    残す
+                    有効
                   </label>
                   {s.record_dir && <div className="small">{s.record_dir}</div>}
                 </td>
               </tr>
             </tbody>
           </table>
-          <h3>流した出来事</h3>
+          <h3>送信したイベント</h3>
           <ul className="events">
-            {s.events.length === 0 && <li className="small">まだ無い</li>}
+            {s.events.length === 0 && <li className="small">まだありません</li>}
             {s.events.map((ev) => (
               <li key={ev.seq}>
                 <span className="seq">#{ev.seq}</span> {describe(ev)} <span className="small">{ev.match_id}</span>
@@ -122,7 +122,7 @@ export default function StatusPage() {
           </ul>
         </div>
       </div>
-      <h3>記録</h3>
+      <h3>ログ</h3>
       <pre className="log">{s.log.join("\n")}</pre>
     </div>
   );

@@ -6,8 +6,8 @@ import MaterialsPage from "./MaterialsPage.jsx";
 
 const TABS = [
   { id: "status", name: "状態" },
-  { id: "materials", name: "そろい具合" },
-  { id: "templates", name: "見本の登録" },
+  { id: "materials", name: "テンプレートの状況" },
+  { id: "templates", name: "テンプレートの登録" },
   { id: "settings", name: "設定" },
 ];
 

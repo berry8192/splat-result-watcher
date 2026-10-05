@@ -35,22 +35,22 @@ export default function SettingsPage() {
     try {
       await invoke("save_settings", { settings: form });
       setSaved(form);
-      setMsg({ bad: false, text: needsRestart || obsChanged ? "残した。番号・撮る幅・撮る配信ソフトは起動し直すと効く" : "残した" });
+      setMsg({ bad: false, text: needsRestart || obsChanged ? "保存しました。ポート・キャプチャの幅・キャプチャ元は再起動後に反映されます" : "保存しました" });
     } catch (e) {
       setMsg({ bad: true, text: String(e) });
     }
   };
 
   const resetGame = async () => {
-    if (!window.confirm("今の試合を何も出さずに捨てて、待機に戻しますか？")) return;
+    if (!window.confirm("現在の試合をイベントを送信せずに破棄し、待機に戻します。よろしいですか？")) return;
     await invoke("reset_game");
-    setMsg({ bad: false, text: "今の試合を捨てた" });
+    setMsg({ bad: false, text: "現在の試合を破棄しました" });
   };
 
   return (
     <div className="page">
-      <h3>見本のそろい具合</h3>
-      {status && status.template_gaps.length === 0 && <div className="good">足りない見本は無い</div>}
+      <h3>テンプレートの不足</h3>
+      {status && status.template_gaps.length === 0 && <div className="good">不足しているテンプレートはありません</div>}
       {status && status.template_gaps.length > 0 && (
         <>
           <ul className="gaps">
@@ -58,14 +58,14 @@ export default function SettingsPage() {
               <li key={g}>{g}</li>
             ))}
           </ul>
-          <div className="small">「見本の登録」で足す。数字は 1 枚の画面に出ている字しか足せないので、何枚かの画面から足す</div>
+          <div className="small">「テンプレートの登録」で追加してください。数字は 1 枚の画面に表示されている文字のみ登録できるため、複数の画面から登録します</div>
         </>
       )}
 
-      <h3>見せる窓</h3>
+      <h3>表示ウィンドウ</h3>
       <div className="settings-form">
         <label>
-          置き方
+          レイアウト
           <select value={form.display.layout} onChange={(e) => setD("layout", e.target.value)}>
             {Object.entries(LAYOUTS).map(([id, name]) => (
               <option key={id} value={id}>
@@ -85,16 +85,16 @@ export default function SettingsPage() {
           </select>
         </label>
         <label>
-          字の大きさ（px）: モードとルール
+          文字サイズ（px）: モードとルール
           <input type="number" min="8" max="200" value={form.display.font_head} onChange={(e) => setD("font_head", Number(e.target.value))} />
           　パワー
           <input type="number" min="8" max="400" value={form.display.font_power} onChange={(e) => setD("font_power", Number(e.target.value))} />
           　勝敗
           <input type="number" min="8" max="200" value={form.display.font_set} onChange={(e) => setD("font_set", Number(e.target.value))} />
-          <span className="small">　窓の大きさは字に合わせて変わる。「残す」ですぐ効く</span>
+          <span className="small">　ウィンドウの大きさは文字に合わせて自動で変わります。「保存」で即時に反映されます</span>
         </label>
         <label>
-          字の色
+          文字色
           <input type="color" value={form.display.text_color} onChange={(e) => setD("text_color", e.target.value)} />
           　モードとルールの色
           <input type="color" value={form.display.head_color} onChange={(e) => setD("head_color", e.target.value)} />
@@ -104,42 +104,42 @@ export default function SettingsPage() {
           <input type="number" min="0" max="20" value={form.display.outline_px} onChange={(e) => setD("outline_px", Number(e.target.value))} />
           　色
           <input type="color" value={form.display.outline_color} onChange={(e) => setD("outline_color", e.target.value)} />
-          <span className="small">　透明な背景のときに字を読みやすくする</span>
+          <span className="small">　背景が透明のときに文字を読みやすくします</span>
         </label>
       </div>
 
       <h3>設定</h3>
       <div className="settings-form">
         <label>
-          待ち受けの番号（ws://127.0.0.1:番号/events）
+          待ち受けポート（ws://127.0.0.1:ポート/events）
           <input type="number" value={form.port} onChange={(e) => set("port", Number(e.target.value))} />
         </label>
         <label>
-          撮る配信ソフト
+          キャプチャ元
           <select value={form.capture_from} onChange={(e) => set("capture_from", e.target.value)}>
-            <option value="auto">自動（N Air が起きていればそれ、無ければ OBS）</option>
+            <option value="auto">自動（N Air があればそれを、なければ OBS を使用）</option>
             <option value="n_air">N Air</option>
             <option value="obs">OBS Studio</option>
           </select>
         </label>
         <label>
-          OBS の WebSocket の番号
+          OBS の WebSocket ポート
           <input type="number" value={form.obs_port} onChange={(e) => set("obs_port", Number(e.target.value))} />
-          <span className="small">　OBS の「ツール → WebSocket サーバー設定」で有効にする（既定 4455）</span>
+          <span className="small">　OBS の「ツール → WebSocket サーバー設定」で有効にしてください（既定 4455）</span>
         </label>
         <label>
           OBS の WebSocket のパスワード
           <input type="password" value={form.obs_password} onChange={(e) => set("obs_password", e.target.value)} />
-          <span className="small">　OBS 側で「認証を有効にする」を切っていれば空でよい</span>
+          <span className="small">　OBS 側で認証を無効にしている場合は空のままで構いません</span>
         </label>
         <label>
-          配信の出力を撮る幅
+          キャプチャの幅
           <input type="number" value={form.width} onChange={(e) => set("width", Number(e.target.value))} />
-          <span className="small">　1280 を勧める（ゲーム穴が照合の大きさにちょうどなる。1920 だと撮影が重い）</span>
+          <span className="small">　1280 を推奨します（ゲーム画面が照合サイズと一致します。1920 では負荷が高くなります）</span>
         </label>
         <label>
-          <input type="checkbox" checked={form.record} onChange={(e) => set("record", e.target.checked)} /> 見本の録画を回す
-          （samples/record に 0.5 秒ごとのゲーム穴を残す）
+          <input type="checkbox" checked={form.record} onChange={(e) => set("record", e.target.checked)} /> フレームを録画する
+          （samples/record に 0.5 秒ごとのゲーム画面を保存します）
         </label>
         <label>
           録画の上限（GB）
@@ -149,23 +149,23 @@ export default function SettingsPage() {
             value={form.record_cap_gb}
             onChange={(e) => set("record_cap_gb", Number(e.target.value))}
           />
-          <span className="small">　超えたら古い順に消す。次に録画を始めたときに効く</span>
+          <span className="small">　超過分は古い順に削除します。次回の録画開始時に反映されます</span>
         </label>
         <label>
-          <input type="checkbox" checked={form.hit_log} onChange={(e) => set("hit_log", e.target.checked)} /> 当たりの記録を残す
-          （デバッグ用。何かに当たった画面と読みを hits\日付\ に。上限 500MB。起動し直すと効く）
+          <input type="checkbox" checked={form.hit_log} onChange={(e) => set("hit_log", e.target.checked)} /> 検出ログを保存する
+          （デバッグ用。検出した画面と認識結果を hits\日付\ に保存します。上限 500MB。再起動後に反映されます）
         </label>
-        <button onClick={save}>残す</button>
-        {needsRestart && <span className="small">　番号と撮る幅は起動し直すと効く</span>}
+        <button onClick={save}>保存</button>
+        {needsRestart && <span className="small">　ポートとキャプチャの幅は再起動後に反映されます</span>}
         {msg && <span className={msg.bad ? "bad" : "good"}>　{msg.text}</span>}
       </div>
 
-      <h3>困ったとき</h3>
+      <h3>トラブル時</h3>
       <div>
         <button className="danger" onClick={resetGame}>
-          今の試合を捨てて待機に戻す
+          現在の試合を破棄して待機に戻す
         </button>
-        <span className="small">　段階がおかしなまま止まったとき。何も出さずに捨てる（読み間違いの勝敗は nicomment で直す）</span>
+        <span className="small">　状態が進まなくなったときに使用します。イベントは送信せずに破棄します（誤認識した勝敗は nicomment 側で修正してください）</span>
       </div>
     </div>
   );
