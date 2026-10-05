@@ -2,10 +2,35 @@ import React, { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { LAYOUTS, BGS } from "./DisplayApp.jsx";
 
+/** 折りたたみの開閉を覚える（覚えられなくても動く） */
+function Section({ id, title, children }) {
+  const key = `srw_sec_${id}`;
+  const [open, setOpen] = useState(() => {
+    try {
+      return localStorage.getItem(key) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggle = (e) => {
+    setOpen(e.target.open);
+    try {
+      localStorage.setItem(key, e.target.open ? "1" : "0");
+    } catch {
+      /* 覚えられなくてもよい */
+    }
+  };
+  return (
+    <details className="sec" open={open} onToggle={toggle}>
+      <summary>{title}</summary>
+      <div className="sec-body">{children}</div>
+    </details>
+  );
+}
+
 export default function SettingsPage() {
   const [form, setForm] = useState(null);
   const [saved, setSaved] = useState(null);
-  const [status, setStatus] = useState(null);
   const [msg, setMsg] = useState(null);
 
   useEffect(() => {
@@ -13,29 +38,27 @@ export default function SettingsPage() {
       setForm(s);
       setSaved(s);
     });
-    let alive = true;
-    const tick = () => invoke("status").then((st) => alive && setStatus(st));
-    tick();
-    const id = setInterval(tick, 2000);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
   }, []);
 
   if (!form) return <div className="page">読み込み中…</div>;
 
   const set = (k, v) => setForm({ ...form, [k]: v });
   const setD = (k, v) => setForm({ ...form, display: { ...form.display, [k]: v } });
-  const needsRestart = saved && (form.port !== saved.port || form.width !== saved.width);
-  const obsChanged =
-    saved && (form.capture_from !== saved.capture_from || form.obs_port !== saved.obs_port || form.obs_password !== saved.obs_password);
+  const dirty = JSON.stringify(form) !== JSON.stringify(saved);
+  const needsRestart =
+    saved &&
+    (form.port !== saved.port ||
+      form.width !== saved.width ||
+      form.capture_from !== saved.capture_from ||
+      form.obs_port !== saved.obs_port ||
+      form.obs_password !== saved.obs_password ||
+      form.hit_log !== saved.hit_log);
 
   const save = async () => {
     try {
       await invoke("save_settings", { settings: form });
       setSaved(form);
-      setMsg({ bad: false, text: needsRestart || obsChanged ? "保存しました。ポート・キャプチャの幅・キャプチャ元は再起動後に反映されます" : "保存しました" });
+      setMsg({ bad: false, text: needsRestart ? "保存しました。ポート・キャプチャ・検出ログの変更は再起動後に反映されます" : "保存しました" });
     } catch (e) {
       setMsg({ bad: true, text: String(e) });
     }
@@ -48,22 +71,8 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="page">
-      <h3>テンプレートの不足</h3>
-      {status && status.template_gaps.length === 0 && <div className="good">不足しているテンプレートはありません</div>}
-      {status && status.template_gaps.length > 0 && (
-        <>
-          <ul className="gaps">
-            {status.template_gaps.map((g) => (
-              <li key={g}>{g}</li>
-            ))}
-          </ul>
-          <div className="small">「テンプレートの登録」で追加してください。数字は 1 枚の画面に表示されている文字のみ登録できるため、複数の画面から登録します</div>
-        </>
-      )}
-
-      <h3>表示ウィンドウ</h3>
-      <div className="settings-form">
+    <div className="page settings-form">
+      <Section id="display" title="表示ウィンドウ">
         <label>
           レイアウト
           <select value={form.display.layout} onChange={(e) => setD("layout", e.target.value)}>
@@ -91,7 +100,6 @@ export default function SettingsPage() {
           <input type="number" min="8" max="400" value={form.display.font_power} onChange={(e) => setD("font_power", Number(e.target.value))} />
           　勝敗
           <input type="number" min="8" max="200" value={form.display.font_set} onChange={(e) => setD("font_set", Number(e.target.value))} />
-          <span className="small">　ウィンドウの大きさは文字に合わせて自動で変わります。「保存」で即時に反映されます</span>
         </label>
         <label>
           文字色
@@ -104,16 +112,11 @@ export default function SettingsPage() {
           <input type="number" min="0" max="20" value={form.display.outline_px} onChange={(e) => setD("outline_px", Number(e.target.value))} />
           　色
           <input type="color" value={form.display.outline_color} onChange={(e) => setD("outline_color", e.target.value)} />
-          <span className="small">　背景が透明のときに文字を読みやすくします</span>
         </label>
-      </div>
+        <div className="small">ウィンドウの大きさは文字に合わせて自動で変わります。配信には配信ソフトのウィンドウキャプチャで載せてください</div>
+      </Section>
 
-      <h3>設定</h3>
-      <div className="settings-form">
-        <label>
-          待ち受けポート（ws://127.0.0.1:ポート/events）
-          <input type="number" value={form.port} onChange={(e) => set("port", Number(e.target.value))} />
-        </label>
+      <Section id="capture" title="キャプチャ">
         <label>
           キャプチャ元
           <select value={form.capture_from} onChange={(e) => set("capture_from", e.target.value)}>
@@ -125,47 +128,53 @@ export default function SettingsPage() {
         <label>
           OBS の WebSocket ポート
           <input type="number" value={form.obs_port} onChange={(e) => set("obs_port", Number(e.target.value))} />
-          <span className="small">　OBS の「ツール → WebSocket サーバー設定」で有効にしてください（既定 4455）</span>
-        </label>
-        <label>
-          OBS の WebSocket のパスワード
+          　パスワード
           <input type="password" value={form.obs_password} onChange={(e) => set("obs_password", e.target.value)} />
-          <span className="small">　OBS 側で認証を無効にしている場合は空のままで構いません</span>
+          <div className="small">OBS の「ツール → WebSocket サーバー設定」で有効にしてください（既定 4455）。認証を無効にしている場合、パスワードは空のままで構いません</div>
         </label>
         <label>
           キャプチャの幅
           <input type="number" value={form.width} onChange={(e) => set("width", Number(e.target.value))} />
-          <span className="small">　1280 を推奨します（ゲーム画面が照合サイズと一致します。1920 では負荷が高くなります）</span>
+          <span className="small">　1280 を推奨します（1920 では負荷が高くなります）</span>
         </label>
+      </Section>
+
+      <Section id="server" title="接続">
+        <label>
+          待ち受けポート（ws://127.0.0.1:ポート/events）
+          <input type="number" value={form.port} onChange={(e) => set("port", Number(e.target.value))} />
+        </label>
+      </Section>
+
+      <Section id="record" title="録画と検出ログ">
         <label>
           <input type="checkbox" checked={form.record} onChange={(e) => set("record", e.target.checked)} /> フレームを録画する
-          （samples/record に 0.5 秒ごとのゲーム画面を保存します）
+          <span className="small">　samples/record に 0.5 秒ごとのゲーム画面を保存します</span>
         </label>
         <label>
           録画の上限（GB）
-          <input
-            type="number"
-            step="1"
-            value={form.record_cap_gb}
-            onChange={(e) => set("record_cap_gb", Number(e.target.value))}
-          />
-          <span className="small">　超過分は古い順に削除します。次回の録画開始時に反映されます</span>
+          <input type="number" step="1" value={form.record_cap_gb} onChange={(e) => set("record_cap_gb", Number(e.target.value))} />
+          <span className="small">　超過分は古い順に削除します</span>
         </label>
         <label>
           <input type="checkbox" checked={form.hit_log} onChange={(e) => set("hit_log", e.target.checked)} /> 検出ログを保存する
-          （デバッグ用。検出した画面と認識結果を hits\日付\ に保存します。上限 500MB。再起動後に反映されます）
+          <span className="small">　デバッグ用。検出した画面と認識結果を hits\日付\ に保存します（上限 500MB）</span>
         </label>
-        <button onClick={save}>保存</button>
-        {needsRestart && <span className="small">　ポートとキャプチャの幅は再起動後に反映されます</span>}
-        {msg && <span className={msg.bad ? "bad" : "good"}>　{msg.text}</span>}
-      </div>
+      </Section>
 
-      <h3>トラブル時</h3>
-      <div>
+      <Section id="trouble" title="トラブル時">
         <button className="danger" onClick={resetGame}>
           現在の試合を破棄して待機に戻す
         </button>
-        <span className="small">　状態が進まなくなったときに使用します。イベントは送信せずに破棄します（誤認識した勝敗は nicomment 側で修正してください）</span>
+        <span className="small">　状態が進まなくなったときに使用します。イベントは送信せずに破棄します</span>
+      </Section>
+
+      <div className="save-bar">
+        <button onClick={save} disabled={!dirty}>
+          保存
+        </button>
+        {dirty && <span className="small">　未保存の変更があります</span>}
+        {msg && <span className={msg.bad ? "bad" : "good"}>　{msg.text}</span>}
       </div>
     </div>
   );
