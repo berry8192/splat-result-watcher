@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "スプラトゥーン3 の配信映像からリザルトを読み、WebSocket で流す"
 authors = ["berry8192"]
 edition = "2021"
+license = "MIT"
 publish = false
 default-run = "splat-result-watcher"
 

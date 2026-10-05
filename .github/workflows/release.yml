@@ -1,0 +1,35 @@
+# v で始まるタグ（例 v0.1.0）を push すると、配布用の zip を組んで GitHub の Releases に置く。
+# 版は Cargo.toml の version と合わせる（zip の名前は Cargo.toml の version から付く）
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo-about
+        run: cargo install cargo-about --locked --features cli
+      - name: test
+        run: cargo test --release --locked --target-dir target/pkg
+      - name: package
+        shell: pwsh
+        run: ./tools/package.ps1
+      - name: release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" (Get-ChildItem dist/*.zip).FullName --title "${{ github.ref_name }}" --generate-notes --draft
