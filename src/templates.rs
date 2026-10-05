@@ -513,8 +513,48 @@ impl Templates {
 }
 
 /// その場所の数字を 1 文字ずつ切る（`drop_last` なら最後の字＝単位の p を捨てる）
+/// 左端にかかった別のもの（メニューのランク「S+1」の切れ端）を捨てる場所
+const TRIM_LEFT_CUT: [&str; 1] = ["menu_udemae_value"];
+
+/// 白い列が左端から始まり、その後に大きな隙間（高さの 3 割以上）があれば、隙間より左を消す。
+/// ランクが「S+1」のように長いと切れ端が入る（本番で 11 列の隙間。数字の間の隙間は 7 列まで、数字は左端から離れて始まる）
+fn trim_left_cut(mut p: Patch) -> Patch {
+    let col = |p: &Patch, x: u32| (0..p.h).any(|y| p.px[(y * p.w + x) as usize] != 0);
+    if p.w == 0 || !(col(&p, 0) || (p.w > 1 && col(&p, 1))) {
+        return p;
+    }
+    let (mut best, mut gap_start, mut x) = (None, None, 0);
+    while x < p.w {
+        match (col(&p, x), gap_start) {
+            (false, None) => gap_start = Some(x),
+            (true, Some(s)) => {
+                if best.is_none_or(|(bs, be): (u32, u32)| x - s > be - bs) {
+                    best = Some((s, x));
+                }
+                gap_start = None;
+            }
+            _ => {}
+        }
+        x += 1;
+    }
+    if let Some((s, e)) = best {
+        if (e - s) as f64 >= 0.3 * p.h as f64 {
+            for y in 0..p.h {
+                for x in 0..e {
+                    p.px[(y * p.w + x) as usize] = 0;
+                }
+            }
+        }
+    }
+    p
+}
+
 pub fn cut_glyphs(work: &RgbImage, place: &Place) -> Vec<matching::Glyph> {
-    let mut g = matching::glyphs(&cut(work, place));
+    let mut p = cut(work, place);
+    if TRIM_LEFT_CUT.contains(&place.id) {
+        p = trim_left_cut(p);
+    }
+    let mut g = matching::glyphs(&p);
     if STRIP_EQUALS.contains(&place.id) {
         let n = g.iter().take_while(|g| !matches!(g, matching::Glyph::Shape(_))).count();
         g.drain(..n);
@@ -723,6 +763,22 @@ mod big_for_small {
                 out.push(format!("{c}→{}{ok}{:.2}/{}{:.2}", best[0].0, best[0].1, best[1].0, best[1].1));
             }
             println!("{key} {text:<6} {}", out.join("  "));
+        }
+    }
+}
+
+#[cfg(test)]
+mod measure_runs {
+    #[test]
+    #[ignore]
+    fn menu_udemae_runs() {
+        let list = std::env::var("SRW_IMGS").unwrap_or_default();
+        for path in list.split(';').filter(|s| !s.is_empty()) {
+            let img = super::to_work(&image::open(path).unwrap().to_rgb8());
+            let p = super::cut(&img, super::place("menu_udemae_value").unwrap());
+            let col = |x: u32| (0..p.h).filter(|&y| p.px[(y * p.w + x) as usize] != 0).count();
+            let s: String = (0..p.w).map(|x| match col(x) { 0 => '.', n if n < 5 => ':', _ => '#' }).collect();
+            println!("{path} h{}\n{s}", p.h);
         }
     }
 }

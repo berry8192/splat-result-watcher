@@ -73,6 +73,8 @@ const TOP_LEFT: Roi = Roi::new(36, 45, 220, 75);
 /// 結果の帯: ルールとステージの黒い帯、その上のモード名の行
 const HEADER_BAR: Roi = Roi::new(680, 66, 240, 30);
 const HEADER_MODE: Roi = Roi::new(664, 38, 220, 22);
+/// 結果の表（個人リザルト・スコアボード）の右の黒いパネル
+const SCOREBOARD: Roi = Roi::new(1150, 250, 200, 300);
 /// マッチングの画面のルール名の行
 const MATCHING_RULE: Roi = Roi::new(180, 310, 300, 50);
 /// マッチングのメニューの黒いパネル（ルール名の上下の、文字の少ない所）
@@ -119,18 +121,72 @@ fn blob_pattern(img: &RgbImage, roi: Roi) -> String {
     runs.iter().filter(|r| r.0 >= 2 || r.1 * 2 >= tall).map(|r| if r.1 * 2 < tall { '.' } else { 'X' }).collect()
 }
 
+/// 白いかたまり（照合する大きさの px）
+struct Blob {
+    w: u32,
+    h: u32,
+    top: u32,
+    px: u32,
+}
+
+fn blobs(img: &RgbImage, roi: Roi) -> (Vec<Blob>, u32) {
+    let (x0, y0, w, h) = roi.scaled(img.width());
+    let at = |x: u32, y: u32| x < img.width() && y < img.height() && white(img.get_pixel(x, y).0);
+    let mut out = Vec::new();
+    let mut start = None;
+    for x in x0..=x0 + w {
+        let any = x < x0 + w && (y0..y0 + h).any(|y| at(x, y));
+        match (any, start) {
+            (true, None) => start = Some(x),
+            (false, Some(s)) => {
+                let ys: Vec<u32> = (y0..y0 + h).filter(|&y| (s..x).any(|xx| at(xx, y))).collect();
+                let px = (s..x).map(|xx| (y0..y0 + h).filter(|&y| at(xx, y)).count() as u32).sum();
+                out.push(Blob { w: x - s, h: ys.last().unwrap() - ys[0] + 1, top: ys[0] - y0, px });
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    (out, h)
+}
+
+/// 「WIN!」「LOSE...」。手元の見本と本番の画面で、字は枠の高さの 0.58〜0.6、上端は 0.1〜0.22、
+/// LOSE の点は高さ 0.12・上端 0.68。試合中の HUD やフレンドの通知は、高さがばらばら（0.2〜0.9）だった（2026-10-05）
 pub fn outcome(img: &RgbImage) -> Option<Outcome> {
-    match blob_pattern(img, TOP_LEFT).as_str() {
-        "XXXX" => Some(Outcome::Win),
-        "XXXX..." => Some(Outcome::Lose),
-        _ => None,
+    let (all, rh) = blobs(img, TOP_LEFT);
+    let rh = rh as f64;
+    // ごく小さいもの（圧縮のちらつき・枠の端）は数えない
+    let b: Vec<&Blob> = all.iter().filter(|b| b.px >= 12).collect();
+    let tall = |b: &Blob| b.h as f64 >= 0.45 * rh;
+    let good = |b: &Blob| (0.45..=0.75).contains(&(b.h as f64 / rh)) && (b.top as f64) <= 0.3 * rh;
+    let dot = |b: &Blob| (b.h as f64) <= 0.2 * rh && (b.w as f64) <= 0.2 * rh && b.top as f64 >= 0.55 * rh;
+    if b.len() < 4 || !b[..4].iter().all(|x| tall(x)) {
+        return None;
+    }
+    let goods: Vec<&&Blob> = b[..4].iter().filter(|x| good(x)).collect();
+    // 字の上端がそろっていること（W は飾りとくっつくことがあるので、4 つのうち 3 つでよい）
+    let aligned = goods.len() >= 3 && {
+        let (lo, hi) = goods.iter().fold((u32::MAX, 0), |(lo, hi), x| (lo.min(x.top), hi.max(x.top)));
+        hi - lo <= 4
+    };
+    if !aligned {
+        return None;
+    }
+    let rest = &b[4..];
+    if rest.is_empty() && (b[1].w as f64) <= 0.3 * rh {
+        Some(Outcome::Win) // 2 つ目は細い「I」
+    } else if rest.len() == 3 && rest.iter().all(|x| dot(x)) {
+        Some(Outcome::Lose)
+    } else {
+        None
     }
 }
 
 /// 結果の帯のモード（X かバンカラか）
 pub fn header_mode(img: &RgbImage) -> Option<Mode> {
-    // 帯は写真の上の半透明の黒（手元の見本で 0.33〜0.61）
-    if ratio(img, HEADER_BAR, neutral_dark) < 0.3 {
+    // 帯は写真の上の半透明の黒（手元の見本で 0.33〜0.61）。その下に結果の表の黒いパネル
+    // （本物は 0.6〜0.84。試合中のマップの画面の上のプレイヤー名を帯と見間違えたときは 0.17）
+    if ratio(img, HEADER_BAR, neutral_dark) < 0.3 || ratio(img, SCOREBOARD, neutral_dark) < 0.4 {
         return None;
     }
     let (x0, y0, w, h) = HEADER_MODE.scaled(img.width());
@@ -380,5 +436,42 @@ mod timing {
             }
         }
         let _ = std::fs::remove_dir_all(&empty);
+    }
+}
+
+/// 当たりの記録の画像で、左上のかたまりと帯を測る（`SRW_IMGS=a.jpg;b.jpg cargo test --release -- --ignored measure_imgs --nocapture`）
+#[cfg(test)]
+mod measure {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn measure_imgs() {
+        let list = std::env::var("SRW_IMGS").unwrap_or_default();
+        for path in list.split(';').filter(|s| !s.is_empty()) {
+            let img = crate::templates::to_work(&image::open(path).unwrap().to_rgb8());
+            let (x0, y0, w, h) = TOP_LEFT.scaled(img.width());
+            let at = |x: u32, y: u32| white(img.get_pixel(x, y).0);
+            let mut runs = Vec::new();
+            let mut start = None;
+            for x in x0..=x0 + w {
+                let any = x < x0 + w && (y0..y0 + h).any(|y| at(x, y));
+                match (any, start) {
+                    (true, None) => start = Some(x),
+                    (false, Some(s)) => {
+                        let ys: Vec<u32> = (y0..y0 + h).filter(|&y| (s..x).any(|xx| at(xx, y))).collect();
+                        let px: usize = (s..x).map(|xx| (y0..y0 + h).filter(|&y| at(xx, y)).count()).sum();
+                        runs.push(format!("x{}w{}h{}t{}p{}", s - x0, x - s, ys.last().unwrap() - ys[0] + 1, ys[0] - y0, px));
+                        start = None;
+                    }
+                    _ => {}
+                }
+            }
+            println!("{path}\n  左上 {} 白 {:.2}", runs.join(" "), ratio(&img, TOP_LEFT, white));
+            println!("  帯 暗 {:.2} モード {:?} パネル {:.2} しぶき {:.2}", ratio(&img, HEADER_BAR, neutral_dark), header_mode(&img), ratio(&img, PANEL_EDGE, neutral_dark), ratio(&img, SPLASH, teal));
+            let rec = crate::recognize::Recognizer::new(crate::templates::Templates::load(&crate::templates::Templates::default_dir()).unwrap());
+            let mu = rec.read_glyphs(&img, crate::templates::place("menu_udemae_value").unwrap());
+            println!("  勝敗 {:?} メニューのウデマエ {}/{} 読み {:?}", outcome(&img), mu.text, mu.guess, rec.recognize(&img).seen);
+        }
     }
 }

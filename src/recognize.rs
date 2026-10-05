@@ -392,8 +392,8 @@ impl Recognizer {
             }
         }
 
-        // X パワーの画面: 「Xパワー」の見出し、または（見本で決まらなければ）増減の青緑のしぶきか、
-        // 黒いパネルの決まった場所に「4 桁.1 桁」の数字（手がかりの数字での推測でもよい）
+        // X パワーの画面: 「Xパワー」の見出し、または（見本で決まらなければ）真ん中の黒いパネルと、
+        // 増減の青緑のしぶきか、決まった場所に「4 桁.1 桁」の数字（手がかりの数字での推測でもよい）
         let label = self.scores(work, p("power_label"));
         let by_label = label.first().is_some_and(|s| s.score >= POWER_LABEL_MIN);
         if let Some(s) = label.first() {
@@ -401,7 +401,8 @@ impl Recognizer {
             notes.peaks.push(("「Xパワー」".into(), s.label.clone(), s.score));
         }
         let n = self.read_glyphs(work, p("power_number"));
-        let by_shape = !by_label && (shapes::x_splash(work) || (shapes::result_panel(work) && parse_power(&n.guess).is_some()));
+        let by_shape =
+            !by_label && shapes::result_panel(work) && (shapes::x_splash(work) || parse_power(&n.guess).is_some());
         if by_label || by_shape {
             if by_shape {
                 notes.shape(work, p("power_label"), "x_power");
