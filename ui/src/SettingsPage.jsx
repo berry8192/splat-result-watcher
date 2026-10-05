@@ -93,6 +93,13 @@ export default function SettingsPage() {
           <input type="number" min="8" max="200" value={form.display.font_set} onChange={(e) => setD("font_set", Number(e.target.value))} />
           <span className="small">　窓の大きさは字に合わせて変わる。「残す」ですぐ効く</span>
         </label>
+        <label>
+          縁取り（px、0 で無し）
+          <input type="number" min="0" max="20" value={form.display.outline_px} onChange={(e) => setD("outline_px", Number(e.target.value))} />
+          　色
+          <input type="color" value={form.display.outline_color} onChange={(e) => setD("outline_color", e.target.value)} />
+          <span className="small">　透明な背景のときに字を読みやすくする</span>
+        </label>
       </div>
 
       <h3>設定</h3>

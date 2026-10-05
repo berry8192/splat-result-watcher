@@ -78,7 +78,9 @@ export default function DisplayApp() {
     };
   }, []);
 
-  const d = settings?.display ?? { layout: "yoko", bg: "#16161d", font_head: 22, font_power: 72, font_set: 30 };
+  const d = settings?.display ?? { layout: "yoko", bg: "#16161d", font_head: 22, font_power: 72, font_set: 30, outline_px: 0, outline_color: "#000000" };
+  // 縁取り: 字の外側にだけ描く（paint-order）。太さは外側に出る分なので 2 倍にする
+  const outline = d.outline_px > 0 ? { WebkitTextStroke: `${d.outline_px * 2}px ${d.outline_color}`, paintOrder: "stroke fill" } : {};
   const layout = LAYOUTS[d.layout] ? d.layout : "yoko";
 
   // 窓の大きさを中身に合わせる（字の大きさや置き方が変わっても余白が同じ）
@@ -138,7 +140,7 @@ export default function DisplayApp() {
       onContextMenu={onContextMenu}
     >
       {/* 横長は 2 段組み（左: モードとルールの下に勝敗、右: パワー）。縦長は上から順に */}
-      <div className="disp-box" ref={box}>
+      <div className="disp-box" ref={box} style={outline}>
         <div className="disp-left">
           <span className="disp-head" style={{ fontSize: d.font_head }}>
             {head || " "}

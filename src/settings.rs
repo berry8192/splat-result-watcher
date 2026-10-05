@@ -44,11 +44,14 @@ pub struct DisplaySettings {
     pub font_head: u32,
     pub font_power: u32,
     pub font_set: u32,
+    /// 字の縁取りの太さ（px。0 で無し）と色。透明な背景で読めるようにする
+    pub outline_px: u32,
+    pub outline_color: String,
 }
 
 impl Default for DisplaySettings {
     fn default() -> Self {
-        DisplaySettings { layout: "yoko".into(), bg: "#16161d".into(), font_head: 22, font_power: 72, font_set: 30 }
+        DisplaySettings { layout: "yoko".into(), bg: "#16161d".into(), font_head: 22, font_power: 72, font_set: 30, outline_px: 0, outline_color: "#000000".into() }
     }
 }
 
