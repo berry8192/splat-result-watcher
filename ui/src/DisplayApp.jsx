@@ -55,10 +55,9 @@ function pick(events) {
     if (set == null && e.wins != null && e.losses != null && (e.type === "set_progress" || e.type === "observed")) {
       set = { wins: e.wins, losses: e.losses };
     }
-    // パワーの変動が出たらセットは終わっている（3 勝目・3 敗目の後は進行の画面が出ない）。次のセットが見えるまで出さない
-    if (set == null && e.type === "power" && !e.calibrating && e.before != null) set = { done: true };
+    // パワーの変動が出たらセットは終わっている（3 勝目・3 敗目の後は進行の画面が出ない）。次のセットは 0 勝 0 敗から
+    if (set == null && e.type === "power" && !e.calibrating && e.before != null) set = { wins: 0, losses: 0 };
   }
-  if (set?.done) set = null;
   return { mode, rule, xp, udemae, set };
 }
 
