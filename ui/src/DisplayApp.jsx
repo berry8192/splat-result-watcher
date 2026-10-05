@@ -49,10 +49,51 @@ function pick(events) {
   return { mode, rule, xp, udemae, set };
 }
 
+/** 値が変わったら、前の値から新しい値へ 1.6 秒かけて数え上げる（ドラムロール）。終わったら `pulse` が進む */
+function useRolling(value) {
+  const [shown, setShown] = useState(value);
+  const [pulse, setPulse] = useState(0);
+  const prev = useRef(value);
+  useEffect(() => {
+    const from = prev.current;
+    prev.current = value;
+    if (value == null || from == null || from === value) {
+      setShown(value);
+      return;
+    }
+    const t0 = performance.now();
+    const dur = 1600;
+    let raf;
+    const step = (t) => {
+      const k = Math.min(1, (t - t0) / dur);
+      const e = 1 - Math.pow(1 - k, 3);
+      setShown(from + (value - from) * e);
+      if (k < 1) raf = requestAnimationFrame(step);
+      else setPulse((n) => n + 1);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [value]);
+  return { shown, pulse };
+}
+
+/** 値が変わった回数（最初の表示は数えない）。CSS の動きを再生し直す key に使う */
+function useChanges(value) {
+  const [n, setN] = useState(0);
+  const prev = useRef(value);
+  useEffect(() => {
+    if (prev.current != null && value != null && prev.current !== value) setN((c) => c + 1);
+    prev.current = value;
+  }, [value]);
+  return n;
+}
+
 function Power({ power, isX, isBankara, size }) {
+  const { shown, pulse } = useRolling(power);
+  if (shown == null) return null;
   return (
-    <span className="disp-power" style={{ fontSize: size }}>
-      {isX ? power.toFixed(1) : power}
+    <span key={pulse} className={pulse > 0 ? "disp-power pop" : "disp-power"} style={{ fontSize: size }}>
+      {isX ? shown.toFixed(1) : Math.round(shown)}
       {isBankara && <small style={{ fontSize: Math.round(size * 0.42) }}>p</small>}
     </span>
   );
@@ -129,6 +170,8 @@ export default function DisplayApp() {
   const isBankara = mode != null && mode.startsWith("bankara");
   const power = isX ? xp : isBankara ? udemae : null;
   const showSet = set && mode !== "bankara_open" && mode !== "other";
+  const setKey = showSet ? `${set.wins}-${set.losses}` : null;
+  const setChanges = useChanges(setKey);
   const note = !s ? "" : !s.source ? "N Air または OBS が見つかりません" : s.events.length === 0 ? "まだ試合を認識していません" : "";
   const powerEl = power != null && <Power power={power} isX={isX} isBankara={isBankara} size={d.font_power} />;
 
@@ -147,7 +190,7 @@ export default function DisplayApp() {
           </span>
           {layout === "tate" && powerEl}
           {showSet && (
-            <span className="disp-set" style={{ fontSize: d.font_set }}>
+            <span key={setChanges} className={setChanges > 0 ? "disp-set pop" : "disp-set"} style={{ fontSize: d.font_set }}>
               {set.wins}勝 {set.losses}敗
             </span>
           )}
