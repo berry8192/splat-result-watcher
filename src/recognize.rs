@@ -35,7 +35,7 @@ const MENU_LABEL_MIN: f64 = 0.4;
 const PROGRESS_LABEL_MIN: f64 = 0.6;
 
 /// 進行の○とイカを色で数える場所（基準 1536×864）と、かたまりの幅の目安（2026-10-04 に見本 10 枚で合った）
-struct Strip {
+pub(crate) struct Strip {
     stamps: Roi,
     stamp_w: u32,
     squids: Roi,
@@ -45,9 +45,9 @@ struct Strip {
 /// 試合後の進行の画面（X・昇格戦の○ 3 個も、チャレンジの 5 個も入る幅）
 const PROGRESS_STRIP: Strip = Strip { stamps: Roi::new(540, 415, 460, 90), stamp_w: 83, squids: Roi::new(555, 520, 290, 60), squid_w: 36 };
 /// ロビーのメニュー（X）。判子の付いた見本はまだ無いので、幅は○の大きさからの見積もり
-const MENU_X_STRIP: Strip = Strip { stamps: Roi::new(1310, 300, 190, 60), stamp_w: 50, squids: Roi::new(1325, 362, 130, 36), squid_w: 20 };
+pub(crate) const MENU_X_STRIP: Strip = Strip { stamps: Roi::new(1310, 300, 190, 60), stamp_w: 50, squids: Roi::new(1325, 362, 130, 36), squid_w: 20 };
 /// ロビーのメニュー（バンカラ。チャレンジの○ 5 個・昇格戦の○ 3 個とも入る幅）
-const MENU_BANKARA_STRIP: Strip =
+pub(crate) const MENU_BANKARA_STRIP: Strip =
     Strip { stamps: Roi::new(1215, 300, 290, 60), stamp_w: 50, squids: Roi::new(1225, 362, 240, 36), squid_w: 20 };
 
 /// WIN の判子（黄緑）
@@ -61,7 +61,7 @@ fn is_squid([r, g, b]: [u8; 3]) -> bool {
 }
 
 /// 勝ち数（判子の数）と負け数（3 − 残っているイカ）。イカが 3 匹より多く見えたら数えない
-fn count_progress(work: &RgbImage, s: &Strip) -> Option<(u8, u8)> {
+pub(crate) fn count_progress(work: &RgbImage, s: &Strip) -> Option<(u8, u8)> {
     let range = |w: u32| (w / 2, w * 8 / 5);
     let (a, b) = range(s.stamp_w);
     let wins = matching::count_color_runs(work, s.stamps, is_stamp, a, b);
@@ -69,6 +69,14 @@ fn count_progress(work: &RgbImage, s: &Strip) -> Option<(u8, u8)> {
     let squids = matching::count_color_runs(work, s.squids, is_squid, a, b);
     (wins <= 5 && squids <= 3).then_some((wins as u8, 3 - squids as u8))
 }
+/// メニューの勝ち負けのランプ。残機（矢印・イカ）が 1 つも無いことはない（3 敗でセットが終わり、次のセットは満タン）ので、
+/// 1 つも見えなければ隠れているとみて数えない
+fn menu_progress(work: &RgbImage, s: &Strip, notes: &mut Notes) -> Option<(u8, u8)> {
+    let wl = count_progress(work, s).filter(|&(_, l)| l < 3);
+    notes.text.push(format!("メニューの進行: {wl:?}"));
+    wl
+}
+
 /// 数字の 1 文字（正しい字は 0.87 以上、2 番目に近い字は 0.79 以下だった）
 pub const GLYPH_MIN: f64 = 0.85;
 
@@ -289,11 +297,9 @@ impl Recognizer {
         if !by_label {
             notes.shape(work, p("menu_x_label"), "x_power");
         }
-        Some(parse_power(&n.text).map(|value| {
-            let wl = count_progress(work, &MENU_X_STRIP);
-            notes.text.push(format!("メニューの進行: {wl:?}"));
-            (Observed::X { rule: None, value }, wl.map(|w| w.0), wl.map(|w| w.1))
-        }))
+        let wl = menu_progress(work, &MENU_X_STRIP, notes);
+        let value = parse_power(&n.text);
+        Some((value.is_some() || wl.is_some()).then(|| (Observed::X { rule: None, value }, wl.map(|w| w.0), wl.map(|w| w.1))))
     }
 
     /// ロビーのメニューのウデマエポイント（`menu_x` と同じ）
@@ -311,11 +317,9 @@ impl Recognizer {
         if !by_label {
             notes.shape(work, p("menu_udemae_label"), "udemae");
         }
-        Some(parse_points(&n.text).map(|value| {
-            let wl = count_progress(work, &MENU_BANKARA_STRIP);
-            notes.text.push(format!("メニューの進行: {wl:?}"));
-            (Observed::Udemae { value }, wl.map(|w| w.0), wl.map(|w| w.1))
-        }))
+        let wl = menu_progress(work, &MENU_BANKARA_STRIP, notes);
+        let value = parse_points(&n.text);
+        Some((value.is_some() || wl.is_some()).then(|| (Observed::Udemae { value }, wl.map(|w| w.0), wl.map(|w| w.1))))
     }
 
     fn recognize_work(&self, work: &RgbImage, notes: &mut Notes) -> Seen {
@@ -392,9 +396,9 @@ impl Recognizer {
             let n = self.read_glyphs(work, p(id));
             notes.number(p(id), short, &n);
             let what = if m == Mode::X {
-                parse_power(&n.text).map(|value| Observed::X { rule: None, value })
+                parse_power(&n.text).map(|value| Observed::X { rule: None, value: Some(value) })
             } else {
-                parse_points(&n.text).map(|value| Observed::Udemae { value })
+                parse_points(&n.text).map(|value| Observed::Udemae { value: Some(value) })
             };
             if let Some(what) = what {
                 return Seen::MatchingValue { mode: m, what, wins: None, losses: None };
@@ -642,16 +646,16 @@ mod with_samples {
         assert_eq!(mm(see("032333")), Seen::Matching(Mode::X));
         assert_eq!(
             see("032333"),
-            Seen::MatchingValue { mode: Mode::X, what: Observed::X { rule: None, value: 2100.0 }, wins: None, losses: None }
+            Seen::MatchingValue { mode: Mode::X, what: Observed::X { rule: None, value: Some(2100.0) }, wins: None, losses: None }
         );
         assert_eq!(
             see("040151"),
-            Seen::MatchingValue { mode: Mode::BankaraChallenge, what: Observed::Udemae { value: 130 }, wins: None, losses: None }
+            Seen::MatchingValue { mode: Mode::BankaraChallenge, what: Observed::Udemae { value: Some(130) }, wins: None, losses: None }
         );
         // メニューの値（手元の見本では字がそろわないので、見本にした画面を読んで仕組みが通るかだけ確かめる）
-        let menu_x = Seen::Observed { what: Observed::X { rule: None, value: 2100.0 }, wins: Some(0), losses: Some(0) };
+        let menu_x = Seen::Observed { what: Observed::X { rule: None, value: Some(2100.0) }, wins: Some(0), losses: Some(0) };
         assert_eq!(see("031924"), menu_x, "{}", why("031924"));
-        let menu_ud = Seen::Observed { what: Observed::Udemae { value: 1051 }, wins: Some(0), losses: Some(0) };
+        let menu_ud = Seen::Observed { what: Observed::Udemae { value: Some(1051) }, wins: Some(0), losses: Some(0) };
         assert_eq!(see("041221"), menu_ud, "{}", why("041221"));
         // 進行の画面（勝ち負けは色で数える。見本にしたのは 032850 の「WIN LOSE」の見出しだけ）
         // 進行の見本のモード（032900 は X、ほかはバンカラのチャレンジ・昇格戦）

@@ -662,6 +662,7 @@ mod measure {
             let r = rec.recognize(&img);
             println!("  勝敗 {:?} メニューのウデマエ {}/{} 読み {:?}", outcome(&img), mu.text, mu.guess, r.seen);
             println!("  札 {:.3} {:?} 精算 {:?}", ratio(&img, PROGRESS_TAG, tag_yellow), progress_mode(&img), udemae_mode(&img));
+            println!("  メニューのランプ X {:?} バンカラ {:?}", crate::recognize::count_progress(&img, &crate::recognize::MENU_X_STRIP), crate::recognize::count_progress(&img, &crate::recognize::MENU_BANKARA_STRIP));
             println!("  ナワバリ {} 途中 {}", turf_intro(&img), r.notes.iter().take(3).cloned().collect::<Vec<_>>().join(" / "));
         }
     }

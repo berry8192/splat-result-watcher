@@ -80,9 +80,10 @@ pub enum Note {
 
 /// メニュー・マッチング中・参加費の画面で見えた自分の値（`observed`）
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// `value` が `None` なのは、メニューの値の字がまだ読めず、勝ち負けのランプだけ見えたとき
 pub enum Observed {
-    X { rule: Option<Rule>, value: f64 },
-    Udemae { value: i32 },
+    X { rule: Option<Rule>, value: Option<f64> },
+    Udemae { value: Option<i32> },
 }
 
 /// 1 フレームで見えたもの。照合が決める
@@ -248,6 +249,9 @@ impl<T: Clone + PartialEq> Settle<T> {
 struct Post {
     #[serde(skip)]
     xp: Settle<i64>,
+    /// 読めた X パワーの移り変わり（続けて同じものは 1 つ）。数え上がった後の値は 1 回しか読めないことがある
+    #[serde(skip)]
+    xp_path: Vec<i64>,
     xp_delta: Option<i64>,
     xp_done: bool,
     calibrating_done: bool,
@@ -271,6 +275,7 @@ impl Post {
     fn new() -> Self {
         Post {
             xp: Settle::new(STABLE),
+            xp_path: Vec::new(),
             xp_delta: None,
             xp_done: false,
             calibrating_done: false,
@@ -364,7 +369,7 @@ pub struct Machine {
 }
 
 /// `observed` を比べる形: (x か, ルール, 値の 10 倍, 勝ち, 負け)
-type ObservedKey = (bool, Option<Rule>, i64, Option<u8>, Option<u8>);
+type ObservedKey = (bool, Option<Rule>, Option<i64>, Option<u8>, Option<u8>);
 
 /// ローテの枠（奇数時から 2 時間）の番号。同じ枠なら同じルール
 fn rotation_slot(at: DateTime<Utc>) -> i64 {
@@ -490,8 +495,8 @@ impl Machine {
             .map(|(r, _)| r);
         let ob = match &seen {
             Seen::Observed { what, wins, losses } | Seen::MatchingValue { what, wins, losses, .. } => Some(match what {
-                Observed::X { rule, value } => (true, rule.or(slot_rule), tenths(*value), *wins, *losses),
-                Observed::Udemae { value } => (false, None, *value as i64 * 10, *wins, *losses),
+                Observed::X { rule, value } => (true, rule.or(slot_rule), value.map(tenths), *wins, *losses),
+                Observed::Udemae { value } => (false, None, value.map(|v| v as i64 * 10), *wins, *losses),
             }),
             _ => None,
         };
@@ -499,7 +504,9 @@ impl Machine {
         if self.observed.push(ob) && !in_battle && self.observed.latest != self.observed_sent {
             let (x, rule, v, wins, losses) = self.observed.latest.unwrap();
             let mut ev = json!({"type": "observed", "kind": if x { "x" } else { "udemae" }, "at": time(at)});
-            ev["value"] = if x { json!(v as f64 / 10.0) } else { json!(v / 10) };
+            if let Some(v) = v {
+                ev["value"] = if x { json!(v as f64 / 10.0) } else { json!(v / 10) };
+            }
             if let Some(r) = rule {
                 ev["rule"] = r.as_str().into();
             }
@@ -731,8 +738,14 @@ impl Machine {
             _ => None,
         };
         p.xp.push(xp);
+        if let Some(v) = xp {
+            if p.xp_path.last() != Some(&v) {
+                p.xp_path.push(v);
+            }
+        }
         if !p.xp_done {
-            if let (Some(before), Some(after), Some(d)) = (p.xp.first, p.xp.latest, p.xp_delta) {
+            // 増減が読めていれば、動いた後の値は 1 回読めただけでよい（計算が合うので）
+            if let (Some(before), Some(&after), Some(d)) = (p.xp.first, p.xp_path.last(), p.xp_delta) {
                 if before + d == after && before != after {
                     Self::power_x(g, at, Some(before), after, out);
                 }
@@ -794,7 +807,8 @@ impl Machine {
     fn gone(g: &mut Game, at: DateTime<Utc>, out: &mut Vec<Value>) {
         let p = &mut g.post;
         if !p.xp_done && p.xp.gone() {
-            let (first, last) = (p.xp.first.unwrap(), p.xp.latest.unwrap());
+            let first = p.xp.first.unwrap();
+            let last = Self::xp_after(p).unwrap_or(p.xp.latest.unwrap());
             let delta_ok = p.xp_delta.is_none_or(|d| first + d == last);
             if first != last && delta_ok || p.xp_delta == Some(0) {
                 Self::power_x(g, at, Some(first), last, out);
@@ -825,6 +839,22 @@ impl Machine {
             let (w, l) = p.progress.latest.unwrap();
             out.push(json!({"type": "set_progress", "match_id": g.id, "wins": w, "losses": l}));
         }
+    }
+
+    /// 動いた後の X パワー。落ち着いた値が動いていればそれ。動く前のまま画面が変わったなら、
+    /// 数え上がりが見えていれば（動く前から一方向に 2 回以上動いた）最後に読めた値
+    /// （数え上がりの後の値は、すぐ「現在の順位」に移って 1 回しか読めないことがある。2026-10-06 の本番）
+    fn xp_after(p: &Post) -> Option<i64> {
+        let first = p.xp.first?;
+        if let Some(l) = p.xp.latest.filter(|&l| l != first) {
+            return Some(l);
+        }
+        let i = p.xp_path.iter().rposition(|&v| v == first)?;
+        let tail = &p.xp_path[i + 1..];
+        let up = tail.windows(2).all(|w| w[0] < w[1]) && tail.first().is_some_and(|&v| v > first);
+        let down = tail.windows(2).all(|w| w[0] > w[1]) && tail.first().is_some_and(|&v| v < first);
+        let enough = tail.len() >= 2 || p.xp_delta.is_some();
+        (enough && (up || down)).then(|| *tail.last().unwrap())
     }
 
     fn power_x(g: &mut Game, at: DateTime<Utc>, before: Option<i64>, after: i64, out: &mut Vec<Value>) {
@@ -1222,7 +1252,7 @@ mod tests {
     #[test]
     fn matching_with_the_menu_gives_both_the_mode_and_the_value() {
         let mut r = Run::new();
-        let mm = Seen::MatchingValue { mode: Mode::X, what: Observed::X { rule: None, value: 2100.0 }, wins: Some(1), losses: Some(0) };
+        let mm = Seen::MatchingValue { mode: Mode::X, what: Observed::X { rule: None, value: Some(2100.0) }, wins: Some(1), losses: Some(0) };
         r.feed(mm, 10).intro(Rule::Area);
         let ob: Vec<&Value> = r.events.iter().filter(|e| e["type"] == "observed").collect();
         assert_eq!(ob.len(), 1);
@@ -1234,7 +1264,7 @@ mod tests {
     #[test]
     fn observed_values_are_sent_once_when_they_change() {
         let ox = |v: f64, w: Option<u8>, l: Option<u8>| Seen::Observed {
-            what: Observed::X { rule: Some(Rule::Hoko), value: v },
+            what: Observed::X { rule: Some(Rule::Hoko), value: Some(v) },
             wins: w,
             losses: l,
         };
@@ -1248,7 +1278,7 @@ mod tests {
         assert!(o[0].get("match_id").is_none());
         // 進行が変わったら出す。ウデマエ（参加費の前の値）は整数
         r.feed(ox(1983.5, Some(2), Some(0)), 4);
-        r.feed(Seen::Observed { what: Observed::Udemae { value: -40 }, wins: None, losses: None }, 4);
+        r.feed(Seen::Observed { what: Observed::Udemae { value: Some(-40) }, wins: None, losses: None }, 4);
         let o = r.of("observed");
         assert_eq!(o.len(), 3);
         assert_eq!((o[2]["kind"].as_str(), o[2]["value"].as_i64()), (Some("udemae"), Some(-40)));
@@ -1261,7 +1291,7 @@ mod tests {
 
     #[test]
     fn menu_x_power_gets_the_rule_of_the_same_rotation() {
-        let menu = |v: f64| Seen::Observed { what: Observed::X { rule: None, value: v }, wins: None, losses: None };
+        let menu = |v: f64| Seen::Observed { what: Observed::X { rule: None, value: Some(v) }, wins: None, losses: None };
         // 12:00 UTC（21:00 日本時間）の枠: 11:00〜13:00 UTC。ヤグラの試合の後のメニュー
         let mut r = Run::new();
         r.intro(Rule::Yagura).feed(win(), 6).wait(200);

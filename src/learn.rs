@@ -74,11 +74,15 @@ struct Track {
     last: Option<DateTime<Utc>>,
     /// この画面で落ち着いた値（古い順、続けて同じものは 1 つ）
     settled: Vec<Settled>,
+    /// 最後に読めた値（落ち着いていなくても）。数え上がった後の値は 1 回しか読めないことがある
+    raw: Option<Settled>,
 }
 
 #[derive(Default)]
 pub struct Learner {
     tracks: HashMap<&'static str, Track>,
+    /// 最近返した見本（同じ計算を、読めた直後と落ち着いたときの 2 回確かめるので、重ねて返さない）
+    given: Vec<(Pool, Vec<u8>)>,
     battle: u64,
     in_intro: bool,
 }
@@ -129,7 +133,20 @@ impl Learner {
             }
             tr.run += 1;
             tr.last = Some(at);
-            if tr.run != STABLE || read.chars.is_empty() {
+            if !read.chars.is_empty() {
+                tr.raw = Some(Settled { at, read: read.clone(), battle });
+            }
+            // 「動く前＋増減＝動いた後」の動いた後は、新しい値が読めたらすぐ確かめる（計算が合うときだけ使う）
+            let sum_value = matches!(*place, "power_number" | "udemae_value") && tr.run == 1 && !read.chars.is_empty();
+            if (tr.run != STABLE || read.chars.is_empty()) && !sum_value {
+                continue;
+            }
+            if tr.run != STABLE {
+                for l in self.infer(place, t) {
+                    if !out.iter().any(|o| o.pool == l.pool && o.patch.px == l.patch.px) {
+                        out.push(l);
+                    }
+                }
                 continue;
             }
             if tr.settled.last().is_none_or(|s| s.read.guess != read.guess) {
@@ -141,6 +158,10 @@ impl Learner {
                 }
             }
         }
+        out.retain(|l| !self.given.iter().any(|(p, px)| *p == l.pool && *px == l.patch.px));
+        self.given.extend(out.iter().map(|l| (l.pool, l.patch.px.clone())));
+        let over = self.given.len().saturating_sub(64);
+        self.given.drain(..over);
         out
     }
 
@@ -167,10 +188,14 @@ impl Learner {
                 continue;
             }
             let s = self.settled(value_id);
-            let (Some(b), Some(a), Some(d)) = (s.first(), s.last(), self.settled(delta_id).last()) else { continue };
-            if s.len() < 2 {
-                continue;
-            }
+            let (Some(b), Some(d)) = (s.first(), self.settled(delta_id).last()) else { continue };
+            // 落ち着いた「動いた後」が無ければ、最後に読めた値で計算だけ確かめる（計算で埋めることはしない）
+            let raw = self.tracks.get(value_id).and_then(|t| t.raw.as_ref()).filter(|r| r.at >= b.at && r.read.guess != b.read.guess);
+            let (a, only_sum) = match (s.len() >= 2, raw) {
+                (true, _) => (s.last().unwrap(), false),
+                (false, Some(r)) => (r, true),
+                _ => continue,
+            };
             let (b, a, d) = (&b.read, &a.read, &d.read);
             let why = format!("{name} {} と {} で {} になった", b.guess, d.guess, a.guess);
             // 確かな読み（見本で読めた）と、推測込みの読み
@@ -188,6 +213,9 @@ impl Learner {
                     }
                     continue;
                 }
+            }
+            if only_sum {
+                continue;
             }
             // 確かな読みが 2 つあれば、残りの 1 つを計算で埋める
             let why = |x: &str| format!("{why}（{x}を計算で埋めた）");
@@ -337,15 +365,16 @@ impl LabelLearner {
             Seen::Header { mode, .. } => Some(*mode),
             _ => None,
         };
+        // 値が見本で読めたときだけ（ランプだけ見えたときは、見出しの確かめにしない）
         let observed_x = matches!(
             seen,
-            Seen::Observed { what: crate::state::Observed::X { .. }, .. }
-                | Seen::MatchingValue { what: crate::state::Observed::X { .. }, .. }
+            Seen::Observed { what: crate::state::Observed::X { value: Some(_), .. }, .. }
+                | Seen::MatchingValue { what: crate::state::Observed::X { value: Some(_), .. }, .. }
         );
         let observed_udemae = matches!(
             seen,
-            Seen::Observed { what: crate::state::Observed::Udemae { .. }, .. }
-                | Seen::MatchingValue { what: crate::state::Observed::Udemae { .. }, .. }
+            Seen::Observed { what: crate::state::Observed::Udemae { value: Some(_) }, .. }
+                | Seen::MatchingValue { what: crate::state::Observed::Udemae { value: Some(_) }, .. }
         );
 
         let mut out = Vec::new();
@@ -534,6 +563,27 @@ mod tests {
         for v in ["1?0", "2?0", "3?5"] {
             r.feed(Seen::Unknown, &[("udemae_value", rd(v, "365")), tot.clone()], 2);
         }
+        assert!(r.got.is_empty());
+    }
+
+    #[test]
+    fn the_value_after_counting_up_is_checked_by_the_sum_even_if_seen_once() {
+        // 数え上がった後の値は 1 回しか読めず、すぐ「現在の順位」に移った（2026-10-06 の本番）
+        let mut r = Run::new();
+        let d = ("power_delta", rdg("???.?", "+75.0", "+75.0"));
+        r.feed(Seen::Unknown, &[("power_number", rd("2119.4", "2119.4"))], 4);
+        r.feed(Seen::Unknown, &[("power_number", rd("2140.6", "2140.6")), d.clone()], 1);
+        r.feed(Seen::Unknown, &[("power_number", rd("2185.6", "2185.6")), d.clone()], 1);
+        r.feed(Seen::Unknown, &[("power_number", rd("2194.4", "2194.4")), d.clone()], 1);
+        // 増減が 3 回続いて落ち着いたところで、1 回だけ読めた 2194.4 と計算が合う
+        let got: Vec<String> = r.got.iter().map(|l| format!("{}:{}", l.pool.dir_name(), l.label)).collect();
+        assert!(got.contains(&"digit_small:plus".to_string()) && got.contains(&"digit_small:7".to_string()), "{got:?}");
+
+        // 途中の値は計算が合わないので使わない
+        let mut r = Run::new();
+        let d = ("power_delta", rdg("???.?", "+75.0", "+75.0"));
+        r.feed(Seen::Unknown, &[("power_number", rd("2119.4", "2119.4"))], 4).feed(Seen::Unknown, &[d.clone()], 3);
+        r.feed(Seen::Unknown, &[("power_number", rd("2140.6", "2140.6")), d], 1);
         assert!(r.got.is_empty());
     }
 
