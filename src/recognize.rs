@@ -84,6 +84,9 @@ pub struct GlyphRead {
     pub text: String,
     /// 1 文字ずつ: (読んだ字, 一致度)。小数点とマイナスは形で決まるので (`.` / `-`, 1.0)
     pub chars: Vec<(char, f64)>,
+    /// 切り出した 1 文字ずつ（`chars` と同じ並び。見本を自動で足すときに使う）
+    #[serde(skip)]
+    pub glyphs: Vec<Glyph>,
 }
 
 /// 1 フレームを読んだ結果。`notes` は GUI に見せる途中経過、`peaks` は記録に残す一致度
@@ -93,6 +96,14 @@ pub struct Reading {
     pub seen: Seen,
     pub notes: Vec<String>,
     pub peaks: Vec<(String, String, f64)>,
+    /// 読んだ数字（場所の id, 読み）。読めない字が混じっていても入る（learn.rs が使う）
+    pub numbers: Vec<(&'static str, GlyphRead)>,
+}
+
+impl Reading {
+    pub fn no_signal() -> Self {
+        Reading { seen: Seen::NoSignal, notes: Vec::new(), peaks: Vec::new(), numbers: Vec::new() }
+    }
 }
 
 pub struct Recognizer {
@@ -109,10 +120,12 @@ fn top2(scores: &[Score]) -> (Option<&Score>, f64) {
 struct Notes {
     text: Vec<String>,
     peaks: Vec<(String, String, f64)>,
+    numbers: Vec<(&'static str, GlyphRead)>,
 }
 
 impl Notes {
-    fn number(&mut self, short: &str, r: &GlyphRead) {
+    fn number(&mut self, place: &Place, short: &str, r: &GlyphRead) {
+        self.numbers.push((place.id, r.clone()));
         self.text.push(format!("{short}: {}", r.note()));
         let low = r.chars.iter().map(|c| c.1).fold(1.0, f64::min);
         self.peaks.push((short.to_string(), r.text.clone(), if r.chars.is_empty() { 0.0 } else { low }));
@@ -179,7 +192,8 @@ impl Recognizer {
         let list = self.t.get(place.pool);
         let mut text = String::new();
         let mut chars = Vec::new();
-        for g in self.glyphs(work, place) {
+        let glyphs = self.glyphs(work, place);
+        for g in &glyphs {
             let g = match g {
                 Glyph::Dot | Glyph::Minus => {
                     let c = if matches!(g, Glyph::Dot) { '.' } else { '-' };
@@ -192,7 +206,7 @@ impl Recognizer {
             let mut best: Option<(char, f64)> = None;
             for t in list {
                 let Some(c) = glyph_char(&t.label) else { continue };
-                let v = matching::glyph_iou(&g, &t.patch);
+                let v = matching::glyph_iou(g, &t.patch);
                 if best.is_none_or(|b| v > b.1) {
                     best = Some((c, v));
                 }
@@ -212,18 +226,18 @@ impl Recognizer {
                 }
             }
         }
-        GlyphRead { text, chars }
+        GlyphRead { text, chars, glyphs }
     }
 
     /// 1 フレームを読む。`game` はゲーム穴（大きさは問わない）
     pub fn recognize(&self, game: &RgbImage) -> Reading {
         let mut notes = Notes::default();
         if nair::dark_ratio(game) > NO_SIGNAL_DARK {
-            return Reading { seen: Seen::NoSignal, notes: Vec::new(), peaks: Vec::new() };
+            return Reading::no_signal();
         }
         let work = templates::to_work(game);
         let seen = self.recognize_work(&work, &mut notes);
-        Reading { seen, notes: notes.text, peaks: notes.peaks }
+        Reading { seen, notes: notes.text, peaks: notes.peaks, numbers: notes.numbers }
     }
 
     fn recognize_work(&self, work: &RgbImage, notes: &mut Notes) -> Seen {
@@ -268,16 +282,17 @@ impl Recognizer {
         if let Some(l) = self.decide(work, p("udemae_title"), UDEMAE_TITLE_MIN, notes) {
             if l == "promoted" {
                 let n = self.read_glyphs(work, p("udemae_reset"));
-                notes.number("リセット", &n);
+                notes.number(p("udemae_reset"), "リセット", &n);
                 if let Some(v) = parse_points(&n.text) {
                     return Seen::UdemaeReset(v);
                 }
             } else {
                 let n = self.read_glyphs(work, p("udemae_value"));
-                notes.number("ウデマエ", &n);
+                notes.number(p("udemae_value"), "ウデマエ", &n);
+                // TOTAL は、ゲージの数字が読めなくても読む（読めない字を計算で埋めるのに使う）
+                let t = self.read_glyphs(work, p("udemae_total"));
+                notes.number(p("udemae_total"), "TOTAL", &t);
                 if let Some(value) = parse_points(&n.text) {
-                    let t = self.read_glyphs(work, p("udemae_total"));
-                    notes.number("TOTAL", &t);
                     return Seen::Udemae { value, total: parse_points(&t.text) };
                 }
             }
@@ -286,7 +301,7 @@ impl Recognizer {
         // ロビーのメニューに出ている自分の値（observed）
         if self.decide(work, p("menu_x_label"), MENU_LABEL_MIN, notes).is_some() {
             let n = self.read_glyphs(work, p("menu_x_value"));
-            notes.number("メニューの X パワー", &n);
+            notes.number(p("menu_x_value"), "メニューの X パワー", &n);
             if let Some(value) = parse_power(&n.text) {
                 let wl = count_progress(work, &MENU_X_STRIP);
                 notes.text.push(format!("メニューの進行: {wl:?}"));
@@ -295,7 +310,7 @@ impl Recognizer {
         }
         if self.decide(work, p("menu_udemae_label"), MENU_LABEL_MIN, notes).is_some() {
             let n = self.read_glyphs(work, p("menu_udemae_value"));
-            notes.number("メニューのウデマエ", &n);
+            notes.number(p("menu_udemae_value"), "メニューのウデマエ", &n);
             if let Some(value) = parse_points(&n.text) {
                 let wl = count_progress(work, &MENU_BANKARA_STRIP);
                 notes.text.push(format!("メニューの進行: {wl:?}"));
@@ -317,11 +332,12 @@ impl Recognizer {
             notes.peaks.push(("「Xパワー」".into(), s.label.clone(), s.score));
             if s.score >= POWER_LABEL_MIN {
                 let n = self.read_glyphs(work, p("power_number"));
-                notes.number("Xパワー", &n);
+                notes.number(p("power_number"), "Xパワー", &n);
+                // 増減は任意（見本があれば念押しに使う。無ければ旧値から新値へ動いたのを見届けて出す）。
+                // 大きな数字が読めなくても読む（読めない字を計算で埋めるのに使う）
+                let d = self.read_glyphs(work, p("power_delta"));
+                notes.number(p("power_delta"), "増減", &d);
                 if let Some(value) = parse_power(&n.text) {
-                    // 増減は任意（見本があれば念押しに使う。無ければ旧値から新値へ動いたのを見届けて出す）
-                    let d = self.read_glyphs(work, p("power_delta"));
-                    notes.number("増減", &d);
                     return Seen::XPower { value, delta: parse_delta(&d.text) };
                 }
             }

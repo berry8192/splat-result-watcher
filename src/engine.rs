@@ -13,22 +13,39 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use chrono::{Local, Utc};
+use chrono::{DateTime, Local, Utc};
 use image::RgbImage;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::learn::Learner;
 use crate::nair::Projector;
 use crate::recognize::Recognizer;
 use crate::recorder::{Recorder, RecorderConfig};
 use crate::server::Server;
 use crate::state::{Config, Machine, Seen};
 use crate::templates::Templates;
-use crate::{data_dir, layout, open_projector, samples_dir, INTERVAL, SLOW_CAPTURE_MS, SLOW_INTERVAL};
+use crate::{data_dir, layout, nair, open_projector, samples_dir, INTERVAL, SLOW_CAPTURE_MS, SLOW_INTERVAL};
 
 /// 控えておく出来事・記録の行の数
 const KEEP_EVENTS: usize = 50;
 const KEEP_LOG: usize = 200;
+/// 見本の登録に使う、直近の画面を持っておく量（JPEG で 1 枚 100KB ほど）。古い方から捨てる
+pub const KEEP_RECENT: Duration = Duration::from_secs(30 * 60);
+pub const KEEP_RECENT_BYTES: usize = 200 * 1024 * 1024;
+/// 結果を読み中・試合後は速く撮って溜める（照合と状態の移り変わりは今まで通り 0.5 秒ごと。
+/// 状態は「何枚続いたか」で落ち着きを見るので、照合の間隔は変えない）
+pub const FAST_INTERVAL: Duration = Duration::from_millis(200);
+/// バトル中は見本に要る画面がほぼ無いので、読めなかった画面は 5 秒に 1 枚だけ溜める
+const BATTLE_KEEP_EVERY: Duration = Duration::from_secs(5);
+
+/// 直近の画面 1 枚（ゲーム穴を JPEG にしたもの）と、そのとき見えたもの
+#[derive(Clone, Debug)]
+pub struct RecentFrame {
+    pub at: DateTime<Local>,
+    pub seen: String,
+    pub jpeg: Arc<Vec<u8>>,
+}
 
 #[derive(Clone, Debug)]
 pub struct EngineConfig {
@@ -96,6 +113,9 @@ struct Shared {
     log_count: AtomicU64,
     /// 最新のゲーム穴（撮ったまま）
     frame: Mutex<Option<RgbImage>>,
+    /// 直近の画面（古い順。映像なしは入れない）
+    recent: Mutex<VecDeque<RecentFrame>>,
+    recent_bytes: AtomicU64,
     recognizer: RwLock<Recognizer>,
     server: Server,
 }
@@ -148,6 +168,8 @@ impl Engine {
             log: Mutex::new(VecDeque::new()),
             log_count: AtomicU64::new(0),
             frame: Mutex::new(None),
+            recent: Mutex::new(VecDeque::new()),
+            recent_bytes: AtomicU64::new(0),
             recognizer: RwLock::new(Recognizer::new(templates)),
             server: server.clone(),
         });
@@ -189,6 +211,11 @@ impl Engine {
     /// 最新のゲーム穴
     pub fn frame(&self) -> Option<RgbImage> {
         self.shared.frame.lock().unwrap().clone()
+    }
+
+    /// 直近の画面（古い順）。見本の登録で、遊んだ後に戻って選ぶ
+    pub fn recent(&self) -> Vec<RecentFrame> {
+        self.shared.recent.lock().unwrap().iter().cloned().collect()
     }
 
     pub fn set_record(&self, on: bool) {
@@ -240,6 +267,23 @@ fn write_atomic(path: &std::path::Path, text: &str) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
+/// 直近の画面に足し、古いものを捨てる
+fn keep_recent(s: &Shared, game: &RgbImage, seen: String) {
+    let mut buf = Vec::new();
+    if image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 90).encode_image(game).is_err() {
+        return;
+    }
+    let at = Local::now();
+    let oldest = at - chrono::Duration::from_std(KEEP_RECENT).unwrap();
+    let mut recent = s.recent.lock().unwrap();
+    let mut bytes = s.recent_bytes.load(Ordering::Relaxed) as usize + buf.len();
+    while recent.front().is_some_and(|f| f.at < oldest || bytes > KEEP_RECENT_BYTES) {
+        bytes -= recent.pop_front().unwrap().jpeg.len();
+    }
+    s.recent_bytes.store(bytes as u64, Ordering::Relaxed);
+    recent.push_back(RecentFrame { at, seen, jpeg: Arc::new(buf) });
+}
+
 fn capture_loop(s: &Shared, cfg: &EngineConfig) {
     let (width, game_path) = (cfg.width, cfg.game_path.as_path());
     let mut machine = Machine::new(Config::default());
@@ -251,11 +295,17 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
         }
     }
     let mut last_saved = machine.save();
+    let mut learner = Learner::default();
     let mut projector: Option<Projector> = None;
     let mut recorder: Option<Recorder> = None;
     let mut last_open_try: Option<Instant> = None;
     let mut interval = INTERVAL;
+    // 今の撮る間隔（段階で変わる）。照合は `interval` ごと
+    let mut tick = interval;
     let mut next = Instant::now();
+    let mut last_read: Option<Instant> = None;
+    let mut last_seen = String::new();
+    let mut last_battle_keep: Option<Instant> = None;
     let mut stage = "";
     // 段階ごとの、場所ごとの一番高い一致度（段階が変わるたびに記録へ書いて空にする）
     let mut peaks: BTreeMap<String, (String, f64)> = BTreeMap::new();
@@ -267,9 +317,9 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
             std::thread::sleep((next - now).min(Duration::from_millis(100)));
             continue;
         }
-        next += interval;
+        next += tick;
         if next < now {
-            next = now + interval; // 遅れを取り戻そうと連写しない
+            next = now + tick; // 遅れを取り戻そうと連写しない
         }
 
         // 録画の入り切り
@@ -323,10 +373,22 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
             }
         }
 
+        // 速く撮っている間は、照合の間隔が来たフレームだけを読む（間のフレームは溜めるだけ）
+        let read_now = last_read.is_none_or(|t| t.elapsed() + tick / 2 >= interval);
+        let in_battle = stage == crate::state::Stage::InBattle.as_str();
         let t = Instant::now();
         let reading = match projector.as_ref().map(|p| p.capture()) {
+            Some(Ok(img)) if !read_now => {
+                let game = layout::crop_game(&img);
+                if !in_battle && nair::dark_ratio(&game) <= crate::NO_SIGNAL_DARK {
+                    keep_recent(s, &game, last_seen.clone());
+                }
+                *s.frame.lock().unwrap() = Some(game);
+                continue;
+            }
             Some(Ok(img)) => {
                 times.push(t.elapsed().as_secs_f64() * 1000.0);
+                last_read = Some(Instant::now());
                 let game = layout::crop_game(&img);
                 let reading = s.recognizer.read().unwrap().recognize(&game);
                 if let Some(r) = &recorder {
@@ -334,15 +396,29 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
                         r.push(Local::now(), game.clone());
                     }
                 }
+                let seen = format!("{:?}", reading.seen);
+                // バトル中は、何か読めた画面（ルール紹介・無効試合の札など）と、5 秒に 1 枚だけ
+                let keep = match reading.seen {
+                    Seen::NoSignal => false,
+                    Seen::Unknown if in_battle => last_battle_keep.is_none_or(|t| t.elapsed() >= BATTLE_KEEP_EVERY),
+                    _ => true,
+                };
+                if keep {
+                    if in_battle {
+                        last_battle_keep = Some(Instant::now());
+                    }
+                    keep_recent(s, &game, seen.clone());
+                }
+                last_seen = seen;
                 *s.frame.lock().unwrap() = Some(game);
                 reading
             }
             Some(Err(e)) => {
                 s.log(format!("撮影に失敗: {:#}。開き直す", e));
                 projector = None;
-                crate::recognize::Reading { seen: Seen::NoSignal, notes: Vec::new(), peaks: Vec::new() }
+                crate::recognize::Reading::no_signal()
             }
-            None => crate::recognize::Reading { seen: Seen::NoSignal, notes: Vec::new(), peaks: Vec::new() },
+            None => crate::recognize::Reading::no_signal(),
         };
 
         let seen_text = format!("{:?}", reading.seen);
@@ -350,6 +426,17 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
             let e = peaks.entry(place.clone()).or_insert_with(|| (label.clone(), *score));
             if *score > e.1 {
                 *e = (label.clone(), *score);
+            }
+        }
+        // 読めない字を、ほかの確かな数字から埋められたら見本に足す（確度の高いものだけ。learn.rs）
+        let learned = learner.feed(Utc::now(), &reading.seen, &reading.numbers, s.recognizer.read().unwrap().templates());
+        if !learned.is_empty() {
+            let mut r = s.recognizer.write().unwrap();
+            for l in learned {
+                match r.templates_mut().add_auto(l.pool, &l.label, l.patch) {
+                    Ok(_) => s.log(format!("見本を自動で足した: {} の「{}」。{}", l.pool.dir_name(), l.label, l.why)),
+                    Err(e) => s.log(format!("見本を自動で足せない: {e:#}")),
+                }
             }
         }
         for ev in machine.feed(Utc::now(), reading.seen) {
@@ -383,6 +470,9 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
             stage = st;
             s.server.set_stage(st);
         }
+        // 結果を読み中・試合後は、見本に要る画面が続くので速く撮る（撮影が重いときはしない）
+        let fast = matches!(machine.stage(), crate::state::Stage::Reading | crate::state::Stage::PostMatch);
+        tick = if fast && interval == INTERVAL { FAST_INTERVAL } else { interval };
 
         // 1 分ごとに撮影の時間を見て、重ければ 1 秒ごとに落とす
         if since.elapsed() >= Duration::from_secs(60) && !times.is_empty() {

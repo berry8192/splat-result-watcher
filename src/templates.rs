@@ -387,6 +387,16 @@ pub struct TemplateInfo {
     pub label: String,
     pub w: u32,
     pub h: u32,
+    /// 自動で足した見本（learn.rs）
+    pub auto: bool,
+}
+
+/// 自動で足した見本の id の印（`ラベル__auto日時`）
+pub const AUTO_MARK: &str = "__auto";
+
+/// 自動で足した見本か
+pub fn is_auto(id: &str) -> bool {
+    id.contains(AUTO_MARK)
 }
 
 /// 登録した見本の全部
@@ -446,7 +456,7 @@ impl Templates {
     pub fn list(&self, pool: Pool) -> Vec<TemplateInfo> {
         self.get(pool)
             .iter()
-            .map(|t| TemplateInfo { id: t.id.clone(), label: t.label.clone(), w: t.patch.w, h: t.patch.h })
+            .map(|t| TemplateInfo { id: t.id.clone(), label: t.label.clone(), w: t.patch.w, h: t.patch.h, auto: is_auto(&t.id) })
             .collect()
     }
 
@@ -457,6 +467,15 @@ impl Templates {
 
     /// 見本を足す。ファイルに書いてから持つ
     pub fn add(&mut self, pool: Pool, label: &str, patch: Patch) -> Result<String> {
+        self.add_as(pool, label, patch, "__")
+    }
+
+    /// 自動で見つけた見本を足す（id に印を付け、GUI で見分けて消せるようにする）
+    pub fn add_auto(&mut self, pool: Pool, label: &str, patch: Patch) -> Result<String> {
+        self.add_as(pool, label, patch, AUTO_MARK)
+    }
+
+    fn add_as(&mut self, pool: Pool, label: &str, patch: Patch, sep: &str) -> Result<String> {
         if label.is_empty() || label.contains(['/', '\\', '.']) || label.contains("__") {
             bail!("ラベル {label:?} は使えない");
         }
@@ -466,7 +485,7 @@ impl Templates {
         let stamp = chrono::Local::now().format("%Y%m%d%H%M%S%3f").to_string();
         let mut n = 0;
         let id = loop {
-            let id = format!("{label}__{stamp}{n:02}");
+            let id = format!("{label}{sep}{stamp}{n:02}");
             if !d.join(format!("{id}.png")).exists() {
                 break id;
             }

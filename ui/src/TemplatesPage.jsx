@@ -19,6 +19,36 @@ const POOL_NAMES = {
   digit_menu: "メニューの数字",
 };
 
+/** 見えたもの（Seen の名前）の日本語 */
+const SEEN_NAMES = {
+  Matching: "マッチング",
+  RuleIntro: "ルール紹介",
+  NoContestNotice: "無効試合の札",
+  Outcome: "勝敗",
+  Header: "結果の帯",
+  XPower: "Xパワー",
+  Calibrating: "計測中",
+  Calibrated: "計測完了",
+  Udemae: "ウデマエ",
+  UdemaeReset: "昇格",
+  Observed: "メニュー",
+  Progress: "進行",
+};
+
+const seenKind = (seen) => seen.split(/[({ ]/)[0];
+
+/** 同じものが続いた所をまとめる（何も読めなかった所は除く） */
+function segments(frames) {
+  const out = [];
+  frames.forEach((f, i) => {
+    const kind = seenKind(f.seen);
+    const last = out[out.length - 1];
+    if (last && last.kind === kind && last.end === i - 1) last.end = i;
+    else if (SEEN_NAMES[kind]) out.push({ kind, start: i, end: i });
+  });
+  return out;
+}
+
 /** ファイルを data URL で読む */
 function readFile(file) {
   return new Promise((resolve, reject) => {
@@ -37,10 +67,18 @@ export default function TemplatesPage() {
   const [text, setText] = useState("");
   const [pools, setPools] = useState([]);
   const [msg, setMsg] = useState(null);
+  const [gaps, setGaps] = useState([]);
+  // 取り込んだ直近の画面と、いま見ている位置
+  const [held, setHeld] = useState(null);
+  const [heldAt, setHeldAt] = useState(0);
 
   const place = places.find((p) => p.id === placeId);
 
-  const refreshPools = useCallback(() => invoke("list_templates").then(setPools), []);
+  const refreshPools = useCallback(async () => {
+    const [p, st] = await Promise.all([invoke("list_templates"), invoke("status")]);
+    setPools(p);
+    setGaps(st.template_gaps);
+  }, []);
 
   useEffect(() => {
     invoke("places").then(setPlaces);
@@ -75,6 +113,28 @@ export default function TemplatesPage() {
   };
 
   const useLive = () => run(async () => setSource(await invoke("source_from_live")), () => "今の画面を元にした");
+  const holdRecent = () =>
+    run(
+      async () => {
+        const list = await invoke("hold_recent");
+        setHeld(list);
+        if (list.length > 0) setHeldAt(list.length - 1);
+        return list.length;
+      },
+      (n) => (n > 0 ? `直近 ${n} 枚を取り込んだ。バーで戻って選ぶ` : "まだ撮れた画面が無い")
+    );
+
+  // バーを動かしたら、少し止まってからその画面を元にする（動かしている間は読み直さない）
+  useEffect(() => {
+    if (!held || held.length === 0) return;
+    const id = setTimeout(() => {
+      invoke("source_from_held", { index: heldAt })
+        .then(setSource)
+        .catch((e) => setMsg({ bad: true, text: String(e) }));
+    }, 150);
+    return () => clearTimeout(id);
+  }, [held, heldAt]);
+
   const useFile = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -85,10 +145,12 @@ export default function TemplatesPage() {
   return (
     <div className="page templates">
       <p className="small">
-        見本はあなたの画面から登録します（ゲームの画面は配る exe に入れないため）。元の絵は「今の画面」か、snap・record で残した
-        ゲーム穴の画像（samples/ の中）を選びます。枠をクリックすると、その場所を切り出します。
+        見本はあなたの画面から登録します（ゲームの画面は配る exe に入れないため）。遊んだ後に「直近の画面から選ぶ」で戻り、
+        数字や勝敗が映った画面を選んでください（読めた画面は下の印から飛べます）。「今の画面」や、snap・record で残した
+        ゲーム穴の画像も使えます。枠をクリックすると、その場所を切り出します。
       </p>
       <div className="toolbar">
+        <button onClick={holdRecent}>直近の画面から選ぶ</button>
         <button onClick={useLive}>今の画面を使う</button>
         <label className="file">
           画像ファイルを選ぶ
@@ -96,6 +158,43 @@ export default function TemplatesPage() {
         </label>
         {msg && <span className={msg.bad ? "bad" : "good"}>{msg.text}</span>}
       </div>
+
+      {held && held.length > 0 && (
+        <div className="seek">
+          <div className="seek-bar">
+            <button onClick={() => setHeldAt(Math.max(0, heldAt - 1))}>◀</button>
+            <input
+              type="range"
+              min={0}
+              max={held.length - 1}
+              value={heldAt}
+              onChange={(e) => setHeldAt(Number(e.target.value))}
+            />
+            <button onClick={() => setHeldAt(Math.min(held.length - 1, heldAt + 1))}>▶</button>
+            <span className="seek-time">
+              {held[heldAt].time}（{heldAt + 1}/{held.length}）{SEEN_NAMES[seenKind(held[heldAt].seen)] ?? ""}
+            </span>
+          </div>
+          <div className="seek-marks">
+            {segments(held).map((g) => (
+              <button
+                key={g.start}
+                className={heldAt >= g.start && heldAt <= g.end ? "on" : ""}
+                title={held[g.start].seen}
+                onClick={() => setHeldAt(Math.floor((g.start + g.end) / 2))}
+              >
+                {held[g.start].time.slice(0, 8)} {SEEN_NAMES[g.kind]}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {gaps.length > 0 && (
+        <div className="gaps small">
+          足りない見本: {gaps.join(" / ")}
+        </div>
+      )}
 
       <div className="row">
         <div className="col source">
@@ -221,9 +320,12 @@ export default function TemplatesPage() {
           </div>
           <div className="thumbs">
             {p.templates.map((t) => (
-              <div key={t.id} className="thumb" title={t.id}>
+              <div key={t.id} className={t.auto ? "thumb auto" : "thumb"} title={t.auto ? `${t.id}（自動で足した）` : t.id}>
                 <img src={t.image} alt={t.label} />
-                <span>{t.label}</span>
+                <span>
+                  {t.label}
+                  {t.auto && <em>自動</em>}
+                </span>
                 <button
                   className="del"
                   onClick={() => run(() => invoke("delete_template", { pool: p.pool, id: t.id }), () => "消した")}

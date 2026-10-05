@@ -2,6 +2,7 @@
 
 pub mod engine;
 pub mod layout;
+pub mod learn;
 pub mod matching;
 pub mod nair;
 pub mod recognize;

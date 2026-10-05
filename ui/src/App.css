@@ -390,3 +390,45 @@ table th {
   border-color: var(--bad);
   color: var(--bad);
 }
+
+.seek {
+  margin: 8px 0;
+}
+.seek-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.seek-bar input[type="range"] {
+  flex: 1;
+}
+.seek-time {
+  min-width: 16em;
+  font-variant-numeric: tabular-nums;
+}
+.seek-marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.seek-marks button {
+  font-size: 12px;
+  padding: 1px 6px;
+}
+.seek-marks button.on {
+  outline: 2px solid #4a9eff;
+}
+.gaps {
+  margin: 4px 0 8px;
+  color: #c87800;
+}
+.thumb.auto {
+  outline: 1px dashed #c87800;
+}
+.thumb em {
+  margin-left: 3px;
+  font-size: 10px;
+  font-style: normal;
+  color: #c87800;
+}

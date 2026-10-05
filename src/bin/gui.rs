@@ -16,7 +16,7 @@ use image::{DynamicImage, ImageFormat, RgbImage};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
-use splat_result_watcher::engine::{Engine, Snapshot};
+use splat_result_watcher::engine::{Engine, RecentFrame, Snapshot};
 use splat_result_watcher::settings::Settings;
 use splat_result_watcher::matching::{Glyph, Patch};
 use splat_result_watcher::nair;
@@ -27,6 +27,8 @@ struct App {
     engine: Mutex<Engine>,
     /// 見本を切り出す元の絵（照合する大きさ 1024×576 にそろえたゲーム穴）
     source: Mutex<Option<RgbImage>>,
+    /// 取り込んだ直近の画面（見ている間に流れていかないよう、取り込んだ時点のものを持つ）
+    held: Mutex<Vec<RecentFrame>>,
 }
 
 type Res<T> = Result<T, String>;
@@ -189,6 +191,30 @@ fn source_from_file(app: State<App>, data_url: String) -> Res<String> {
     let url = jpeg_url(&work, WORK_W);
     *app.source.lock().unwrap() = Some(work);
     Ok(url)
+}
+
+#[derive(Serialize)]
+struct HeldInfo {
+    time: String,
+    seen: String,
+}
+
+/// 直近の画面を取り込む（古い順の一覧を返す）
+#[tauri::command]
+fn hold_recent(app: State<App>) -> Vec<HeldInfo> {
+    let recent = app.engine.lock().unwrap().recent();
+    let list = recent.iter().map(|f| HeldInfo { time: f.at.format("%H:%M:%S%.1f").to_string(), seen: f.seen.clone() }).collect();
+    *app.held.lock().unwrap() = recent;
+    list
+}
+
+/// 取り込んだ直近の画面の `index` 枚目を見本の元にする
+#[tauri::command]
+fn source_from_held(app: State<App>, index: usize) -> Res<String> {
+    let f = app.held.lock().unwrap().get(index).cloned().ok_or("その画面はもう無い（取り込み直す）")?;
+    let img = image::load_from_memory_with_format(&f.jpeg, ImageFormat::Jpeg).map_err(err)?.to_rgb8();
+    *app.source.lock().unwrap() = Some(templates::to_work(&img));
+    Ok(format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(f.jpeg.as_slice())))
 }
 
 #[derive(Serialize)]
@@ -395,7 +421,7 @@ fn main() {
             if let Some(w) = warn {
                 eprintln!("{w}");
             }
-            app.manage(App { engine: Mutex::new(engine), source: Mutex::new(None) });
+            app.manage(App { engine: Mutex::new(engine), source: Mutex::new(None), held: Mutex::new(Vec::new()) });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -427,6 +453,8 @@ fn main() {
             places,
             source_from_live,
             source_from_file,
+            hold_recent,
+            source_from_held,
             inspect,
             register_label,
             register_glyphs,
