@@ -127,6 +127,19 @@ fn save_settings(app: State<App>, settings: Settings) -> Res<()> {
     Ok(())
 }
 
+/// 受信側向けの API の説明（公開リポジトリの docs/api.md）
+const API_DOC_URL: &str = "https://github.com/berry8192/splat-result-watcher/blob/main/docs/api.md";
+
+/// API の説明を既定のブラウザで開く（開く先はこの URL だけ）
+#[tauri::command]
+fn open_api_doc() -> Res<()> {
+    std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", API_DOC_URL])
+        .spawn()
+        .map(|_| ())
+        .map_err(err)
+}
+
 /// 今の試合を捨てて待機に戻す
 #[tauri::command]
 fn reset_game(app: State<App>) {
@@ -466,6 +479,7 @@ fn main() {
             get_settings,
             save_settings,
             reset_game,
+            open_api_doc,
             open_settings,
             places,
             source_from_live,

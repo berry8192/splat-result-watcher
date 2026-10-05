@@ -263,6 +263,13 @@ export default function SettingsPage() {
           待ち受けポート（ws://127.0.0.1:ポート/events）
           <input type="number" value={form.port} onChange={(e) => set("port", Number(e.target.value))} />
         </label>
+        <div className="small">
+          読み取った結果は、この URL に WebSocket で接続すると JSON のイベントとして受け取れます。受信側の作り方は API の説明を参照してください。
+          <button style={{ marginLeft: 8 }} onClick={() => invoke("open_api_doc")}>
+            API の説明を開く
+          </button>
+          <span style={{ marginLeft: 8, userSelect: "text" }}>https://github.com/berry8192/splat-result-watcher/blob/main/docs/api.md</span>
+        </div>
       </Section>
 
       <Section id="record" title="録画と検出ログ">
