@@ -471,6 +471,12 @@ mod measure {
             println!("  帯 暗 {:.2} モード {:?} パネル {:.2} しぶき {:.2}", ratio(&img, HEADER_BAR, neutral_dark), header_mode(&img), ratio(&img, PANEL_EDGE, neutral_dark), ratio(&img, SPLASH, teal));
             let rec = crate::recognize::Recognizer::new(crate::templates::Templates::load(&crate::templates::Templates::default_dir()).unwrap());
             let mu = rec.read_glyphs(&img, crate::templates::place("menu_udemae_value").unwrap());
+            let mx = rec.read_glyphs(&img, crate::templates::place("menu_x_value").unwrap());
+            println!("  メニューの X {}/{} 見出しの色 {}", mx.text, mx.guess, menu_x_label(&img));
+            for id in ["matching_x_value", "matching_udemae_value"] {
+                let g = rec.read_glyphs(&img, crate::templates::place(id).unwrap());
+                println!("  {id} {}/{} {}", g.text, g.guess, g.note());
+            }
             println!("  勝敗 {:?} メニューのウデマエ {}/{} 読み {:?}", outcome(&img), mu.text, mu.guess, rec.recognize(&img).seen);
         }
     }

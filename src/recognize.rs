@@ -273,6 +273,51 @@ impl Recognizer {
         Reading { seen, notes: notes.text, peaks: notes.peaks, numbers: notes.numbers, shape_labels: notes.shape_labels }
     }
 
+    /// ロビーのメニューの X パワー。見出しが見本で決まらなければ、色と数字の形式で。
+    /// `None` はメニューではない、`Some(None)` はメニューだが値が見本で読めない
+    fn menu_x(&self, work: &RgbImage, notes: &mut Notes) -> Option<Option<(Observed, Option<u8>, Option<u8>)>> {
+        let p = |id| place(id).expect("場所の名前");
+        let by_label = self.decide(work, p("menu_x_label"), MENU_LABEL_MIN, notes).is_some();
+        if !(by_label || shapes::menu_x_label(work)) {
+            return None;
+        }
+        let n = self.read_glyphs(work, p("menu_x_value"));
+        if !(by_label || parse_power(&n.guess).is_some()) {
+            return None;
+        }
+        notes.number(p("menu_x_value"), "メニューの X パワー", &n);
+        if !by_label {
+            notes.shape(work, p("menu_x_label"), "x_power");
+        }
+        Some(parse_power(&n.text).map(|value| {
+            let wl = count_progress(work, &MENU_X_STRIP);
+            notes.text.push(format!("メニューの進行: {wl:?}"));
+            (Observed::X { rule: None, value }, wl.map(|w| w.0), wl.map(|w| w.1))
+        }))
+    }
+
+    /// ロビーのメニューのウデマエポイント（`menu_x` と同じ）
+    fn menu_udemae(&self, work: &RgbImage, notes: &mut Notes) -> Option<Option<(Observed, Option<u8>, Option<u8>)>> {
+        let p = |id| place(id).expect("場所の名前");
+        let by_label = self.decide(work, p("menu_udemae_label"), MENU_LABEL_MIN, notes).is_some();
+        if !(by_label || shapes::menu_udemae_label(work)) {
+            return None;
+        }
+        let n = self.read_glyphs(work, p("menu_udemae_value"));
+        if !(by_label || parse_points(&n.guess).is_some()) {
+            return None;
+        }
+        notes.number(p("menu_udemae_value"), "メニューのウデマエ", &n);
+        if !by_label {
+            notes.shape(work, p("menu_udemae_label"), "udemae");
+        }
+        Some(parse_points(&n.text).map(|value| {
+            let wl = count_progress(work, &MENU_BANKARA_STRIP);
+            notes.text.push(format!("メニューの進行: {wl:?}"));
+            (Observed::Udemae { value }, wl.map(|w| w.0), wl.map(|w| w.1))
+        }))
+    }
+
     fn recognize_work(&self, work: &RgbImage, notes: &mut Notes) -> Seen {
         let p = |id| place(id).expect("場所の名前");
         let rule = |l: String| match l.as_str() {
@@ -324,6 +369,22 @@ impl Recognizer {
                 .inspect(|m| notes.shape(work, p("matching"), if *m == Mode::X { "x" } else { "bankara" })),
         };
         if let Some(m) = matching {
+            // 左のパネルに自分の値も出ている（右上は「対戦相手を待っています」で、メニューの値は出ない）
+            let (id, short) = if m == Mode::X {
+                ("matching_x_value", "マッチングの X パワー")
+            } else {
+                ("matching_udemae_value", "マッチングのウデマエ")
+            };
+            let n = self.read_glyphs(work, p(id));
+            notes.number(p(id), short, &n);
+            let what = if m == Mode::X {
+                parse_power(&n.text).map(|value| Observed::X { rule: None, value })
+            } else {
+                parse_points(&n.text).map(|value| Observed::Udemae { value })
+            };
+            if let Some(what) = what {
+                return Seen::MatchingValue { mode: m, what, wins: None, losses: None };
+            }
             return Seen::Matching(m);
         }
 
@@ -350,37 +411,12 @@ impl Recognizer {
             return Seen::Unknown;
         }
 
-        // ロビーのメニューに出ている自分の値（observed）。見出しが見本で決まらなければ、色と数字の形式で
-        let by_label = self.decide(work, p("menu_x_label"), MENU_LABEL_MIN, notes).is_some();
-        if by_label || shapes::menu_x_label(work) {
-            let n = self.read_glyphs(work, p("menu_x_value"));
-            if by_label || parse_power(&n.guess).is_some() {
-                notes.number(p("menu_x_value"), "メニューの X パワー", &n);
-                if !by_label {
-                    notes.shape(work, p("menu_x_label"), "x_power");
-                }
-                if let Some(value) = parse_power(&n.text) {
-                    let wl = count_progress(work, &MENU_X_STRIP);
-                    notes.text.push(format!("メニューの進行: {wl:?}"));
-                    return Seen::Observed { what: Observed::X { rule: None, value }, wins: wl.map(|w| w.0), losses: wl.map(|w| w.1) };
-                }
-                return Seen::Unknown;
-            }
-        }
-        let by_label = self.decide(work, p("menu_udemae_label"), MENU_LABEL_MIN, notes).is_some();
-        if by_label || shapes::menu_udemae_label(work) {
-            let n = self.read_glyphs(work, p("menu_udemae_value"));
-            if by_label || parse_points(&n.guess).is_some() {
-                notes.number(p("menu_udemae_value"), "メニューのウデマエ", &n);
-                if !by_label {
-                    notes.shape(work, p("menu_udemae_label"), "udemae");
-                }
-                if let Some(value) = parse_points(&n.text) {
-                    let wl = count_progress(work, &MENU_BANKARA_STRIP);
-                    notes.text.push(format!("メニューの進行: {wl:?}"));
-                    return Seen::Observed { what: Observed::Udemae { value }, wins: wl.map(|w| w.0), losses: wl.map(|w| w.1) };
-                }
-                return Seen::Unknown;
+        // ロビーのメニューに出ている自分の値（observed）
+        for menu in [Self::menu_x, Self::menu_udemae] {
+            match menu(self, work, notes) {
+                Some(Some((what, wins, losses))) => return Seen::Observed { what, wins, losses },
+                Some(None) => return Seen::Unknown,
+                None => {}
             }
         }
 
@@ -582,7 +618,19 @@ mod with_samples {
         assert_eq!(see("040526"), Seen::Udemae { value: 130, total: Some(25) }, "{}", why("040526"));
         assert_eq!(see("040905"), Seen::Udemae { value: 365, total: Some(380) }, "{}", why("040905"));
         assert_eq!(see("041716"), Seen::UdemaeReset(300), "{}", why("041716"));
-        assert_eq!(see("032333"), Seen::Matching(Mode::X));
+        let mm = |s: Seen| match s {
+            Seen::MatchingValue { mode, .. } => Seen::Matching(mode),
+            s => s,
+        };
+        assert_eq!(mm(see("032333")), Seen::Matching(Mode::X));
+        assert_eq!(
+            see("032333"),
+            Seen::MatchingValue { mode: Mode::X, what: Observed::X { rule: None, value: 2100.0 }, wins: None, losses: None }
+        );
+        assert_eq!(
+            see("040151"),
+            Seen::MatchingValue { mode: Mode::BankaraChallenge, what: Observed::Udemae { value: 130 }, wins: None, losses: None }
+        );
         // メニューの値（手元の見本では字がそろわないので、見本にした画面を読んで仕組みが通るかだけ確かめる）
         let menu_x = Seen::Observed { what: Observed::X { rule: None, value: 2100.0 }, wins: Some(0), losses: Some(0) };
         assert_eq!(see("031924"), menu_x, "{}", why("031924"));
@@ -593,7 +641,7 @@ mod with_samples {
         for (key, w, l) in [("032900", 1, 0), ("040351", 0, 1), ("040627", 3, 1), ("040643", 3, 2), ("041437", 2, 1), ("041454", 2, 2)] {
             assert_eq!(see(key), pr(w, l), "{key}: {}", why(key));
         }
-        assert_eq!(see("040151"), Seen::Matching(Mode::BankaraChallenge));
+        assert_eq!(mm(see("040151")), Seen::Matching(Mode::BankaraChallenge));
         // メニュー・順位・試合中（無効試合の札・バトル中・Finish!）・X に挑戦できる・進行
         let quiet = [
             "033416", "042113", "041735", "041804", "134014", "134030", "134042", "134056",

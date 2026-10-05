@@ -39,11 +39,14 @@ const MAX_AUTO: usize = 3;
 
 const DIGIT_POOLS: [Pool; 5] = [Pool::Digit, Pool::DigitSmall, Pool::DigitGauge, Pool::DigitTotal, Pool::DigitMenu];
 
-/// 試合後の値と、同じ値が出るメニューの場所（X はルールの時間帯も合わせる）
-const SAME_VALUE: [(&str, &str, bool); 3] = [
+/// 試合後の値と、同じ値が出るメニュー・マッチングの場所（X はルールの時間帯も合わせる）
+const SAME_VALUE: [(&str, &str, bool); 6] = [
     ("power_number", "menu_x_value", true),
     ("udemae_value", "menu_udemae_value", false),
     ("udemae_reset", "menu_udemae_value", false),
+    ("power_number", "matching_x_value", true),
+    ("udemae_value", "matching_udemae_value", false),
+    ("udemae_reset", "matching_udemae_value", false),
 ];
 
 /// 自動で足す見本 1 つ
@@ -334,8 +337,16 @@ impl LabelLearner {
             Seen::Header { mode, .. } => Some(*mode),
             _ => None,
         };
-        let observed_x = matches!(seen, Seen::Observed { what: crate::state::Observed::X { .. }, .. });
-        let observed_udemae = matches!(seen, Seen::Observed { what: crate::state::Observed::Udemae { .. }, .. });
+        let observed_x = matches!(
+            seen,
+            Seen::Observed { what: crate::state::Observed::X { .. }, .. }
+                | Seen::MatchingValue { what: crate::state::Observed::X { .. }, .. }
+        );
+        let observed_udemae = matches!(
+            seen,
+            Seen::Observed { what: crate::state::Observed::Udemae { .. }, .. }
+                | Seen::MatchingValue { what: crate::state::Observed::Udemae { .. }, .. }
+        );
 
         let mut out = Vec::new();
         let mut keep = Vec::new();

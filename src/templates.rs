@@ -338,6 +338,28 @@ pub const PLACES: &[Place] = &[
         kind: Kind::Glyphs,
     },
     Place {
+        id: "matching_x_value",
+        name: "マッチング中の左のパネルの X パワー（青緑の太い数字）",
+        short: "マッチングの X パワー",
+        roi: Roi::new(185, 432, 170, 44),
+        min: 150,
+        pool: Pool::Digit,
+        drop_last: false,
+        bright: true,
+        kind: Kind::Glyphs,
+    },
+    Place {
+        id: "matching_udemae_value",
+        name: "マッチング中の左のパネルのウデマエポイント（オレンジ。先頭のランクの字と最後の p は読まない）",
+        short: "マッチングのウデマエ",
+        roi: Roi::new(178, 414, 160, 40),
+        min: 150,
+        pool: Pool::Digit,
+        drop_last: true,
+        bright: true,
+        kind: Kind::Glyphs,
+    },
+    Place {
         id: "progress_label",
         name: "試合後の進行の画面の「WIN LOSE」（勝ち負けは○の判子とイカの色で数える）",
         short: "進行",
@@ -549,10 +571,45 @@ fn trim_left_cut(mut p: Patch) -> Patch {
     p
 }
 
+/// 先頭にランクの字（S・A+ など）がある場所。先頭のかたまりを捨て、次が数字の高さでなければ（「S+」の「+」など）読まない
+const DROP_RANK: [&str; 1] = ["matching_udemae_value"];
+
+/// 先頭のかたまり（ランクの字）を消す。次のかたまりが一番高い字の 8 割に満たなければ全部消す（読み違えるより読まない）
+fn drop_rank(mut p: Patch) -> Patch {
+    let col = |p: &Patch, x: u32| (0..p.h).any(|y| p.px[(y * p.w + x) as usize] != 0);
+    let mut runs = Vec::new();
+    let mut start = None;
+    for x in 0..=p.w {
+        match (x < p.w && col(&p, x), start) {
+            (true, None) => start = Some(x),
+            (false, Some(s)) => {
+                let rows: Vec<u32> = (0..p.h).filter(|&y| (s..x).any(|xx| p.px[(y * p.w + xx) as usize] != 0)).collect();
+                runs.push((s, x, rows.last().unwrap() - rows[0] + 1));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    let tallest = runs.iter().map(|r| r.2).max().unwrap_or(0);
+    let clear_to = match runs.get(1) {
+        Some(r) if r.2 * 10 >= tallest * 8 => r.0,
+        _ => p.w,
+    };
+    for y in 0..p.h {
+        for x in 0..clear_to {
+            p.px[(y * p.w + x) as usize] = 0;
+        }
+    }
+    p
+}
+
 pub fn cut_glyphs(work: &RgbImage, place: &Place) -> Vec<matching::Glyph> {
     let mut p = cut(work, place);
     if TRIM_LEFT_CUT.contains(&place.id) {
         p = trim_left_cut(p);
+    }
+    if DROP_RANK.contains(&place.id) {
+        p = drop_rank(p);
     }
     let mut g = matching::glyphs(&p);
     if STRIP_EQUALS.contains(&place.id) {

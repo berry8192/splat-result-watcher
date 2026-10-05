@@ -91,6 +91,9 @@ pub enum Seen {
     Unknown,
     /// マッチング中の画面（左のパネルの「Xパワー」「ウデマエ」でモードが分かる）
     Matching(Mode),
+    /// マッチング中で、左のパネルの自分の値（X パワー・ウデマエポイント）も読めた。
+    /// `Matching` と `Observed` を一度に（勝ち負けの○は読まない）
+    MatchingValue { mode: Mode, what: Observed, wins: Option<u8>, losses: Option<u8> },
     /// 試合の始まりの「ルール ガチ〇〇」
     RuleIntro(Rule),
     /// 試合中に出る「…無効試合になりました」の札
@@ -449,7 +452,7 @@ impl Machine {
 
         // マッチング中の画面: これからの試合のモード
         let mm = match &seen {
-            Seen::Matching(m) => Some(*m),
+            Seen::Matching(m) | Seen::MatchingValue { mode: m, .. } => Some(*m),
             _ => None,
         };
         if self.matching.push(mm) {
@@ -467,7 +470,7 @@ impl Machine {
             .filter(|(_, t)| rotation_slot(*t) == rotation_slot(at))
             .map(|(r, _)| r);
         let ob = match &seen {
-            Seen::Observed { what, wins, losses } => Some(match what {
+            Seen::Observed { what, wins, losses } | Seen::MatchingValue { what, wins, losses, .. } => Some(match what {
                 Observed::X { rule, value } => (true, rule.or(slot_rule), tenths(*value), *wins, *losses),
                 Observed::Udemae { value } => (false, None, *value as i64 * 10, *wins, *losses),
             }),
@@ -1139,6 +1142,18 @@ mod tests {
         let ud = |v, t| Seen::Udemae { value: v, total: t };
         r.intro(Rule::Asari).feed(Seen::Outcome(Outcome::Lose), 6).wait(20).feed(ud(-15, Some(380)), 4).feed(ud(365, Some(380)), 4);
         assert_eq!(order(&r), ["result", "power"]);
+    }
+
+    #[test]
+    fn matching_with_the_menu_gives_both_the_mode_and_the_value() {
+        let mut r = Run::new();
+        let mm = Seen::MatchingValue { mode: Mode::X, what: Observed::X { rule: None, value: 2100.0 }, wins: Some(1), losses: Some(0) };
+        r.feed(mm, 10).intro(Rule::Area);
+        let ob: Vec<&Value> = r.events.iter().filter(|e| e["type"] == "observed").collect();
+        assert_eq!(ob.len(), 1);
+        assert_eq!((ob[0]["value"].as_f64(), ob[0]["wins"].as_u64()), (Some(2100.0), Some(1)));
+        let started = r.events.iter().find(|e| e["type"] == "battle_started").unwrap();
+        assert_eq!(started["mode"], "x", "マッチングのモードも使う");
     }
 
     #[test]

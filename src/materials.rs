@@ -62,9 +62,13 @@ const SCREENS: &[Screen] = &[
     },
     Screen {
         name: "マッチング",
-        show: "マッチを始めて、メニューを開いたまま待つ（左にルール名と「Xパワー」か「ウデマエ」）",
-        gives: "これから始まる試合のモード（結果の帯が読めないときの手がかり）",
-        needs: &[Need { pool: Pool::Matching, labels: &["x", "bankara"], how: How::Shape, required: false }],
+        show: "マッチを始めて、メニューを開いたまま待つ（左のパネルにルール名と「Xパワー 2100.0」か「ウデマエ S130p」）",
+        gives: "これから始まる試合のモードと、今の X パワー・ウデマエポイント（observed）",
+        needs: &[
+            Need { pool: Pool::Matching, labels: &["x", "bankara"], how: How::Shape, required: false },
+            // 数字は X パワーの画面と同じ字体（大きな数字の見本を使う）
+            Need { pool: Pool::Digit, labels: DIGITS, how: How::SameValue, required: true },
+        ],
     },
     Screen {
         name: "ルール紹介",
