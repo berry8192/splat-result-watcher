@@ -41,6 +41,7 @@ export function pick(events) {
   let rule = null;
   let xp = null;
   let udemae = null;
+  let rank = null; // ウデマエのランク（"S+1" など。メニューで読めたとき）
   let set = null;
   let ended = null; // セットを終わらせたパワーの変動（match_id）と、その試合の勝敗
   for (const e of events) {
@@ -51,6 +52,7 @@ export function pick(events) {
       if (e.kind === "x" && xp == null) xp = e.after;
       if (e.kind === "udemae" && udemae == null) udemae = e.after;
     }
+    if (rank == null && (e.type === "observed" || e.type === "manual") && e.kind === "udemae" && e.rank) rank = e.rank;
     if ((e.type === "observed" || e.type === "manual") && e.value != null) {
       if (e.kind === "x" && xp == null) xp = e.value;
       if (e.kind === "udemae" && udemae == null) udemae = e.value;
@@ -73,7 +75,7 @@ export function pick(events) {
     const win = ended.outcome === "win";
     set.final = { wins: ended.prev.wins + (win ? 1 : 0), losses: ended.prev.losses + (win ? 0 : 1) };
   }
-  return { mode, rule, xp, udemae, set };
+  return { mode, rule, xp, udemae, rank, set };
 }
 
 /** 値が変わったら、前の値から新しい値へ数え上げる（ドラムロール）。上がるときは 4 秒かけ、下がるときは 1.6 秒。
@@ -107,10 +109,11 @@ function useRolling(value) {
   return { shown, rolling };
 }
 
-function Power({ shown, isX, isBankara, size, color }) {
+function Power({ shown, isX, isBankara, rank, size, color }) {
   if (shown == null) return null;
   return (
     <span className="disp-power" style={{ fontSize: size, color }}>
+      {isBankara && rank && <small style={{ fontSize: Math.round(size * 0.6) }}>{rank} </small>}
       {isX ? shown.toFixed(1) : Math.round(shown)}
       {isBankara && <small style={{ fontSize: Math.round(size * 0.42) }}>p</small>}
     </span>
@@ -183,7 +186,7 @@ export default function DisplayApp() {
   };
 
   const events = s?.events ?? [];
-  const { mode, rule, xp, udemae, set } = pick(events);
+  const { mode, rule, xp, udemae, rank, set } = pick(events);
   const modeName = MODE_NAMES[mode] ?? "";
   const ruleName = RULE_NAMES[rule] ?? "";
   const isX = mode === "x";
@@ -194,7 +197,7 @@ export default function DisplayApp() {
   const setShown = set?.final && rolling ? set.final : set;
   const showSet = setShown && mode !== "bankara_open" && mode !== "other";
   const note = !s ? "" : !s.source ? "N Air または OBS が見つかりません" : events.length === 0 ? "まだ試合を認識していません" : "";
-  const powerEl = shown != null && <Power shown={shown} isX={isX} isBankara={isBankara} size={d.font_power} color={d.power_color} />;
+  const powerEl = shown != null && <Power shown={shown} isX={isX} isBankara={isBankara} rank={rank} size={d.font_power} color={d.power_color} />;
 
   return (
     <div

@@ -83,7 +83,8 @@ pub enum Note {
 /// `value` が `None` なのは、メニューの値の字がまだ読めず、勝ち負けのランプだけ見えたとき
 pub enum Observed {
     X { rule: Option<Rule>, value: Option<f64> },
-    Udemae { value: Option<i32> },
+    /// `rank` はメニューで読めたランク（C- 〜 S+50）
+    Udemae { value: Option<i32>, rank: Option<crate::rank::Rank> },
 }
 
 /// 1 フレームで見えたもの。照合が決める
@@ -374,8 +375,8 @@ pub struct Machine {
     serial: u32,
 }
 
-/// `observed` を比べる形: (x か, ルール, 値の 10 倍, 勝ち, 負け)
-type ObservedKey = (bool, Option<Rule>, Option<i64>, Option<u8>, Option<u8>);
+/// `observed` を比べる形: (x か, ルール, 値の 10 倍, 勝ち, 負け, ランク)
+type ObservedKey = (bool, Option<Rule>, Option<i64>, Option<u8>, Option<u8>, Option<crate::rank::Rank>);
 
 /// ローテの枠（奇数時から 2 時間）の番号。同じ枠なら同じルール
 fn rotation_slot(at: DateTime<Utc>) -> i64 {
@@ -503,20 +504,23 @@ impl Machine {
             .map(|(r, _)| r);
         let ob = match &seen {
             Seen::Observed { what, wins, losses, .. } | Seen::MatchingValue { what, wins, losses, .. } => Some(match what {
-                Observed::X { rule, value } => (true, rule.or(slot_rule), value.map(tenths), *wins, *losses),
-                Observed::Udemae { value } => (false, None, value.map(|v| v as i64 * 10), *wins, *losses),
+                Observed::X { rule, value } => (true, rule.or(slot_rule), value.map(tenths), *wins, *losses, None),
+                Observed::Udemae { value, rank } => (false, None, value.map(|v| v as i64 * 10), *wins, *losses, *rank),
             }),
             _ => None,
         };
         let in_battle = self.game.as_ref().is_some_and(|g| !g.has_end());
         if self.observed.push(ob) && !in_battle && self.observed.latest != self.observed_sent {
-            let (x, rule, v, wins, losses) = self.observed.latest.unwrap();
+            let (x, rule, v, wins, losses, rank) = self.observed.latest.unwrap();
             let mut ev = json!({"type": "observed", "kind": if x { "x" } else { "udemae" }, "at": time(at)});
             if let Some(v) = v {
                 ev["value"] = if x { json!(v as f64 / 10.0) } else { json!(v / 10) };
             }
             if let Some(r) = rule {
                 ev["rule"] = r.as_str().into();
+            }
+            if let Some(r) = rank {
+                ev["rank"] = r.to_string().into();
             }
             if let (Some(w), Some(l)) = (wins, losses) {
                 ev["wins"] = w.into();
@@ -1319,7 +1323,7 @@ mod tests {
         assert!(o[0].get("match_id").is_none());
         // 進行が変わったら出す。ウデマエ（参加費の前の値）は整数
         r.feed(ox(1983.5, Some(2), Some(0)), 4);
-        r.feed(Seen::Observed { what: Observed::Udemae { value: Some(-40) }, wins: None, losses: None, lobby: None }, 4);
+        r.feed(Seen::Observed { what: Observed::Udemae { value: Some(-40), rank: None }, wins: None, losses: None, lobby: None }, 4);
         let o = r.of("observed");
         assert_eq!(o.len(), 3);
         assert_eq!((o[2]["kind"].as_str(), o[2]["value"].as_i64()), (Some("udemae"), Some(-40)));

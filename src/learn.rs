@@ -373,8 +373,8 @@ impl LabelLearner {
         );
         let observed_udemae = matches!(
             seen,
-            Seen::Observed { what: crate::state::Observed::Udemae { value: Some(_) }, .. }
-                | Seen::MatchingValue { what: crate::state::Observed::Udemae { value: Some(_) }, .. }
+            Seen::Observed { what: crate::state::Observed::Udemae { value: Some(_), .. }, .. }
+                | Seen::MatchingValue { what: crate::state::Observed::Udemae { value: Some(_), .. }, .. }
         );
 
         let mut out = Vec::new();

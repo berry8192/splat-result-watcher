@@ -560,6 +560,54 @@ pub fn rule_intro(img: &RgbImage) -> Option<Rule> {
     (sc[0].1 >= WORD_MIN && sc[0].1 - sc[1].1 >= WORD_MARGIN).then_some(sc[0].0)
 }
 
+// ---- ウデマエのランクの英字 ----
+
+/// ランクの英字 1 文字（外接の箱の白黒の絵）。ゲームの字はとても太く、書いた字と比べても合わないので、
+/// 左右の 4 分の 1 ずつが、決まった高さでどれだけ埋まっているかで見分ける（高さは箱に対する割合）:
+/// - A: てっぺん（0〜15%）は真ん中だけ、足元（85〜100%）は真ん中が空く（2 本の足）
+/// - S: 中ほどの上（45〜58%）は右が空き、下（70〜85%）は左が空く
+/// - C: 中ほど（45〜58%）は右が空き、下（70〜85%）は左が埋まる
+/// - B: 中ほど（45〜58%）も右が埋まる
+/// S は本番の画面で確かめた（S・S+1）。A・B・C は見本が無く、字の作りからの決めごと
+pub fn rank_letter(px: &[bool], w: usize, h: usize) -> Option<char> {
+    if w < 6 || h < 10 {
+        return None;
+    }
+    let fill = |y0: f64, y1: f64, x0: f64, x1: f64| {
+        let (ya, yb) = ((y0 * h as f64) as usize, ((y1 * h as f64).ceil() as usize).min(h));
+        let (xa, xb) = ((x0 * w as f64) as usize, ((x1 * w as f64).ceil() as usize).min(w));
+        let (mut n, mut all) = (0, 0);
+        for y in ya..yb {
+            for x in xa..xb {
+                n += px[y * w + x] as u32;
+                all += 1;
+            }
+        }
+        if all == 0 { 0.0 } else { n as f64 / all as f64 }
+    };
+    let (left, mid, right) = ((0.0, 0.25), (0.35, 0.65), (0.75, 1.0));
+    let band = |y0, y1, (x0, x1): (f64, f64)| fill(y0, y1, x0, x1);
+    let (low, high) = (0.3, 0.6);
+    // A: てっぺんは細く、足の間が空く
+    if band(0.0, 0.15, left) < low && band(0.0, 0.15, right) < low && band(0.85, 1.0, mid) < low {
+        return Some('A');
+    }
+    let upper_right = band(0.45, 0.58, right);
+    let lower_left = band(0.7, 0.85, left);
+    if upper_right >= high && band(0.45, 0.58, left) >= high {
+        return Some('B');
+    }
+    if upper_right < low && band(0.45, 0.58, left) >= high {
+        if lower_left < low && band(0.7, 0.85, right) >= high {
+            return Some('S');
+        }
+        if lower_left >= high && band(0.7, 0.85, right) < high {
+            return Some('C');
+        }
+    }
+    None
+}
+
 // ---- ロビーのメニューで選んでいるモードとルール ----
 
 /// 選んでいるモードの大きなカードの上の方（字の来ない所）。X は青緑、バンカラは橙、レギュラーは黄緑
@@ -598,9 +646,9 @@ fn vivid([r, g, b]: [u8; 3]) -> bool {
     mx >= 150 && mx - mn >= 90
 }
 
-/// 暗い字（カードの上の黒い字）
+/// 暗い字（カードの上の字）。N Air の出力ではほぼ黒（25, 15, 5）、OBS の出力では暗い赤茶（70, 10, 0）。橙の地は R が 230 以上
 fn ink([r, g, b]: [u8; 3]) -> bool {
-    r.max(g).max(b) < 70
+    r.max(g).max(b) < 105
 }
 
 fn menu_tail_words() -> &'static Vec<Vec<Vec<bool>>> {

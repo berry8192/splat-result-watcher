@@ -8,6 +8,7 @@ pub mod matching;
 pub mod materials;
 pub mod nair;
 pub mod obs;
+pub mod rank;
 pub mod recognize;
 pub mod recorder;
 pub mod server;

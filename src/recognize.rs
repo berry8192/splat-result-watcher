@@ -15,7 +15,7 @@ use crate::nair;
 use crate::shapes;
 use crate::starter;
 use crate::state::{Mode, Note, Observed, Outcome, Rule, Seen};
-use crate::templates::{self, glyph_char, place, Place, Templates};
+use crate::templates::{self, glyph_char, place, Place, Pool, Templates};
 use crate::NO_SIGNAL_DARK;
 
 /// ずらして探す幅（照合する大きさでの px）
@@ -79,6 +79,10 @@ fn menu_progress(work: &RgbImage, s: &Strip, notes: &mut Notes) -> Option<(u8, u
 
 /// 数字の 1 文字（正しい字は 0.87 以上、2 番目に近い字は 0.79 以下だった）
 pub const GLYPH_MIN: f64 = 0.85;
+/// S+ の小さな数字: 見本の一致度の下限と 2 番目の字との差、手がかりの数字の下限
+const RANK_DIGIT_MIN: f64 = 0.45;
+const RANK_DIGIT_MARGIN: f64 = 0.1;
+const RANK_STARTER_MIN: f64 = 0.6;
 
 /// ラベルごとの一番よい一致度（高い順）
 #[derive(Clone, Debug, Serialize)]
@@ -319,7 +323,37 @@ impl Recognizer {
         }
         let wl = menu_progress(work, &MENU_BANKARA_STRIP, notes);
         let value = parse_points(&n.text);
-        Some((value.is_some() || wl.is_some()).then(|| (Observed::Udemae { value }, wl.map(|w| w.0), wl.map(|w| w.1))))
+        let rank = self.menu_rank(work);
+        if let Some(r) = rank {
+            notes.text.push(format!("ランク: {r}"));
+        }
+        Some((value.is_some() || wl.is_some() || rank.is_some()).then(|| (Observed::Udemae { value, rank }, wl.map(|w| w.0), wl.map(|w| w.1))))
+    }
+
+    /// メニューのウデマエのランク。S+ の数字は、メニューの数字の見本（なければ手がかりの数字）で読む。
+    /// S+ の数字は照合する大きさで高さ 12 画素ほどしかなく、見本との一致度は 0.5 前後にとどまる
+    /// （本番の「S+1」の 1 が 0.50、2 番目の字が 0.36）。2 番目の字と離れていれば採り、決まらなければ読まない
+    fn menu_rank(&self, work: &RgbImage) -> Option<crate::rank::Rank> {
+        let list = self.t.get(Pool::DigitMenu);
+        crate::rank::read_menu(work, shapes::rank_letter, |g| {
+            let Glyph::Shape(g) = g else { return None };
+            // 字ごとに一番近い見本
+            let mut by_char: Vec<(char, f64)> = Vec::new();
+            for t in list {
+                let Some(c) = glyph_char(&t.label).filter(|c| c.is_ascii_digit()) else { continue };
+                let v = matching::glyph_iou(g, &t.patch);
+                match by_char.iter_mut().find(|b| b.0 == c) {
+                    Some(b) => b.1 = b.1.max(v),
+                    None => by_char.push((c, v)),
+                }
+            }
+            by_char.sort_by(|a, b| b.1.total_cmp(&a.1));
+            let second = by_char.get(1).map_or(0.0, |b| b.1);
+            match by_char.first() {
+                Some(&(c, v)) if v >= GLYPH_MIN || (v >= RANK_DIGIT_MIN && v - second >= RANK_DIGIT_MARGIN) => Some(c),
+                _ => starter::guess(Pool::DigitMenu, g).filter(|s| s.c.is_ascii_digit() && s.score >= RANK_STARTER_MIN).map(|s| s.c),
+            }
+        })
     }
 
     fn recognize_work(&self, work: &RgbImage, notes: &mut Notes) -> Seen {
@@ -398,7 +432,7 @@ impl Recognizer {
             let what = if m == Mode::X {
                 parse_power(&n.text).map(|value| Observed::X { rule: None, value: Some(value) })
             } else {
-                parse_points(&n.text).map(|value| Observed::Udemae { value: Some(value) })
+                parse_points(&n.text).map(|value| Observed::Udemae { value: Some(value), rank: None })
             };
             if let Some(what) = what {
                 return Seen::MatchingValue { mode: m, what, wins: None, losses: None };
@@ -663,12 +697,12 @@ mod with_samples {
         );
         assert_eq!(
             see("040151"),
-            Seen::MatchingValue { mode: Mode::BankaraChallenge, what: Observed::Udemae { value: Some(130) }, wins: None, losses: None }
+            Seen::MatchingValue { mode: Mode::BankaraChallenge, what: Observed::Udemae { value: Some(130), rank: None }, wins: None, losses: None }
         );
         // メニューの値（手元の見本では字がそろわないので、見本にした画面を読んで仕組みが通るかだけ確かめる）
         let menu_x = Seen::Observed { what: Observed::X { rule: Some(Rule::Yagura), value: Some(2100.0) }, wins: Some(0), losses: Some(0), lobby: Some((Mode::X, Rule::Yagura)) };
         assert_eq!(see("031924"), menu_x, "{}", why("031924"));
-        let menu_ud = Seen::Observed { what: Observed::Udemae { value: Some(1051) }, wins: Some(0), losses: Some(0), lobby: Some((Mode::BankaraChallenge, Rule::Asari)) };
+        let menu_ud = Seen::Observed { what: Observed::Udemae { value: Some(1051), rank: Some(crate::rank::Rank { letter: 'S', modifier: 0, num: None }) }, wins: Some(0), losses: Some(0), lobby: Some((Mode::BankaraChallenge, Rule::Asari)) };
         assert_eq!(see("041221"), menu_ud, "{}", why("041221"));
         // 進行の画面（勝ち負けは色で数える。見本にしたのは 032850 の「WIN LOSE」の見出しだけ）
         // 進行の見本のモード（032900 は X、ほかはバンカラのチャレンジ・昇格戦）
