@@ -586,10 +586,8 @@ pub fn rule_intro(img: &RgbImage) -> Option<Rule> {
 /// - C: 中ほど（45〜58%）は右が空き、下（70〜85%）は左が埋まる
 /// - B: 中ほど（45〜58%）も右が埋まる
 /// S は本番の画面で確かめた（S・S+1）。A・B・C は見本が無く、字の作りからの決めごと
-pub fn rank_letter(px: &[bool], w: usize, h: usize) -> Option<char> {
-    if w < 6 || h < 10 {
-        return None;
-    }
+/// 英字の白黒の絵の、帯ごとの埋まり方: 上 15% の左・中・右、45〜58% の左・右、70〜85% の左・右、下 15% の中
+pub fn rank_letter_bands(px: &[bool], w: usize, h: usize) -> [f64; 8] {
     let fill = |y0: f64, y1: f64, x0: f64, x1: f64| {
         let (ya, yb) = ((y0 * h as f64) as usize, ((y1 * h as f64).ceil() as usize).min(h));
         let (xa, xb) = ((x0 * w as f64) as usize, ((x1 * w as f64).ceil() as usize).min(w));
@@ -602,23 +600,40 @@ pub fn rank_letter(px: &[bool], w: usize, h: usize) -> Option<char> {
         }
         if all == 0 { 0.0 } else { n as f64 / all as f64 }
     };
-    let (left, mid, right) = ((0.0, 0.25), (0.35, 0.65), (0.75, 1.0));
-    let band = |y0, y1, (x0, x1): (f64, f64)| fill(y0, y1, x0, x1);
-    let (low, high) = (0.3, 0.6);
-    // A: てっぺんは細く、足の間が空く
-    if band(0.0, 0.15, left) < low && band(0.0, 0.15, right) < low && band(0.85, 1.0, mid) < low {
+    let (l, m, r) = ((0.0, 0.25), (0.35, 0.65), (0.75, 1.0));
+    [
+        fill(0.0, 0.15, l.0, l.1),
+        fill(0.0, 0.15, m.0, m.1),
+        fill(0.0, 0.15, r.0, r.1),
+        fill(0.45, 0.58, l.0, l.1),
+        fill(0.45, 0.58, r.0, r.1),
+        fill(0.7, 0.85, l.0, l.1),
+        fill(0.7, 0.85, r.0, r.1),
+        fill(0.85, 1.0, m.0, m.1),
+    ]
+}
+
+pub fn rank_letter(px: &[bool], w: usize, h: usize) -> Option<char> {
+    if w < 6 || h < 10 {
+        return None;
+    }
+    // 手元の S 4 枚（本番）と、攻略サイトのメニューの画像の A 3・B 3・C 2 枚で分かれ方を見た（2026-10-06）。
+    // 太い字で穴は小さいので、穴ではなく、角と開いた側の埋まり方で見る
+    let [tl, _tm, tr, ml, _mr, ll, lr, _bm] = rank_letter_bands(px, w, h);
+    // A: てっぺんは細く、両端の角が空く（A 0〜11%、ほかは 58% 以上か右上が埋まる）
+    if tl < 0.3 && tr < 0.3 {
         return Some('A');
     }
-    let upper_right = band(0.45, 0.58, right);
-    let lower_left = band(0.7, 0.85, left);
-    if upper_right >= high && band(0.45, 0.58, left) >= high {
-        return Some('B');
+    // S: 左上の角が丸く、下段の左が空く（S 0〜6%、B・C は 79% 以上）
+    if tl < 0.4 && ll < 0.3 && ml >= 0.6 {
+        return Some('S');
     }
-    if upper_right < low && band(0.45, 0.58, left) >= high {
-        if lower_left < low && band(0.7, 0.85, right) >= high {
-            return Some('S');
+    if tl >= 0.45 && ml >= 0.6 && ll >= 0.6 {
+        // 下段の右: B は 75〜79%、C は開いた口で 25〜46%
+        if lr >= 0.6 {
+            return Some('B');
         }
-        if lower_left >= high && band(0.7, 0.85, right) < high {
+        if lr < 0.55 {
             return Some('C');
         }
     }

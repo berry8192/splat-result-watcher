@@ -102,8 +102,10 @@ fn points_start(r: &[Run]) -> Option<usize> {
             && (c.top as f64 - next.top as f64).abs() <= tol
             && (c.bottom as f64 - next.bottom as f64).abs() <= tol
     };
+    // 数字は幅より背が高い。「+」はほぼ正方形で、古い画面では数字と同じくらいの背になる（B+ の見本）
+    let digit = |c: &Run| c.x1 - c.x0 < c.h();
     let mut i = n - 2;
-    while i > 1 && same(&r[i - 1], &r[i]) {
+    while i > 1 && same(&r[i - 1], &r[i]) && digit(&r[i - 1]) {
         i -= 1;
     }
     if i > 1 {
@@ -143,9 +145,10 @@ pub fn read_menu(
     }
     let (m, w, h) = mask(&p, head);
     let letter = letter(&m, w, h)?;
+    // 「-」は横長（幅が背の 1.5 倍以上。太い字では背が英字の 3 割を超えることもある）、「+」はほぼ正方形で英字より低い
     let modifier = match rank.get(1) {
         None => 0,
-        Some(c) if c.h() * 10 < head.h() * 3 => -1,
+        Some(c) if (c.x1 - c.x0) * 2 >= c.h() * 3 => -1,
         Some(c) if c.h() * 10 < head.h() * 9 => 1,
         Some(_) => return None,
     };
@@ -191,6 +194,9 @@ mod tests {
         // 「S -40p」: マイナスは数字に含める
         let r = [run(0, 26, 0, 30), run(32, 42, 16, 19), run(45, 59, 6, 29), run(61, 75, 6, 29), run(77, 91, 11, 35)];
         assert_eq!(points_start(&r), Some(1));
+        // 「B+ 523p」: 古い画面の「+」は数字と同じくらいの背だが、ほぼ正方形なので数字に含めない
+        let r = [run(8, 30, 0, 22), run(33, 55, 0, 18), run(64, 74, 2, 18), run(78, 90, 1, 17), run(93, 105, 0, 16), run(107, 117, 4, 20)];
+        assert_eq!(points_start(&r), Some(2));
     }
 }
 
@@ -206,7 +212,7 @@ fn measure_rank_line() {
         let r = runs(&pt);
         println!("{}  {}x{}", p.rsplit(['/', '\\']).next().unwrap(), pt.w, pt.h);
         println!("  runs {:?}", r.iter().map(|r| (r.x0, r.x1, r.top, r.bottom)).collect::<Vec<_>>());
-        println!("  points_start {:?}", points_start(&r));
+        println!("  points_start {:?}  rank {:?}", points_start(&r), read_menu(&img, crate::shapes::rank_letter, |_| None).map(|r| r.to_string()));
         if let Some(s) = points_start(&r).filter(|s| *s > 2) {
             let (x0, x1) = (r[2].x0, r[s - 1].x1);
             let sub = Patch {
@@ -227,7 +233,7 @@ fn measure_rank_line() {
         }
         if let Some(h) = r.first() {
             let (m, w, hh) = mask(&pt, h);
-            println!("  letter {:?}", crate::shapes::rank_letter(&m, w, hh));
+            println!("  letter {:?}  bands {:?}", crate::shapes::rank_letter(&m, w, hh), crate::shapes::rank_letter_bands(&m, w, hh).map(|v| (v * 100.0).round() as i32));
             for y in 0..hh {
                 println!("    {}", (0..w).map(|x| if m[y * w + x] { '#' } else { '.' }).collect::<String>());
             }
