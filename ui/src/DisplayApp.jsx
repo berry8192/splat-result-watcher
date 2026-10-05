@@ -1,37 +1,23 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 
 // 見せる窓: 配信ソフトのウィンドウキャプチャで配信に載せる前提の、字だけの小さな窓。
-// 枠は無く、左ドラッグで動かし、右クリックのメニューで置き方・背景・設定を変える。
+// 枠は無く、左ドラッグで動かし、右クリックのメニューで置き方・背景を変える（字の大きさは設定の窓で）。
+// 置き方・背景・字の大きさは settings.json の `display` に入り、設定の窓と共有する。窓の大きさは中身に合わせる。
 
 const MODE_NAMES = { x: "Xマッチ", bankara_challenge: "バンカラ チャレンジ", bankara_open: "バンカラ オープン", bankara: "バンカラ", other: "" };
 const RULE_NAMES = { area: "ガチエリア", yagura: "ガチヤグラ", hoko: "ガチホコ", asari: "ガチアサリ", turf_war: "ナワバリバトル" };
-/** 置き方ごとの窓の大きさ（論理 px） */
-const LAYOUTS = { yoko: { name: "横長", w: 560, h: 150 }, tate: { name: "縦長", w: 320, h: 300 } };
-const BGS = [
+export const LAYOUTS = { yoko: "横長", tate: "縦長" };
+export const BGS = [
+  ["transparent", "透明（ウィンドウキャプチャで透過を許可する）"],
   ["#16161d", "暗い"],
   ["#000000", "黒"],
   ["#00ff00", "緑（クロマキー用）"],
   ["#0000ff", "青（クロマキー用）"],
 ];
-
-const store = {
-  get(k, d) {
-    try {
-      return localStorage.getItem(k) ?? d;
-    } catch {
-      return d;
-    }
-  },
-  set(k, v) {
-    try {
-      localStorage.setItem(k, v);
-    } catch {
-      /* 覚えられなくても動く */
-    }
-  },
-};
+/** 窓の余白（論理 px） */
+const PAD = { x: 28, y: 22 };
 
 /** 出来事（新しい順）から、見せるものを拾う。それぞれ一番新しいものだけ */
 function pick(events) {
@@ -61,15 +47,28 @@ function pick(events) {
   return { mode, rule, xp, udemae, set };
 }
 
+function Power({ power, isX, isBankara, size }) {
+  return (
+    <span className="disp-power" style={{ fontSize: size }}>
+      {isX ? power.toFixed(1) : power}
+      {isBankara && <small style={{ fontSize: Math.round(size * 0.42) }}>p</small>}
+    </span>
+  );
+}
+
 export default function DisplayApp() {
   const [s, setS] = useState(null);
-  const [layout, setLayout] = useState(() => (LAYOUTS[store.get("srw_layout", "yoko")] ? store.get("srw_layout", "yoko") : "yoko"));
-  const [bg, setBg] = useState(() => store.get("srw_bg", BGS[0][0]));
+  const [settings, setSettings] = useState(null);
   const [menu, setMenu] = useState(null);
+  const box = useRef(null);
+  const lastSize = useRef("");
 
   useEffect(() => {
     let alive = true;
-    const tick = () => invoke("status").then((st) => alive && setS(st)).catch(() => {});
+    const tick = () => {
+      invoke("status").then((st) => alive && setS(st)).catch(() => {});
+      invoke("get_settings").then((st) => alive && setSettings(st)).catch(() => {});
+    };
     tick();
     const id = setInterval(tick, 1000);
     return () => {
@@ -78,13 +77,20 @@ export default function DisplayApp() {
     };
   }, []);
 
-  // 置き方に合わせて窓の大きさを変える
-  useEffect(() => {
-    const { w, h } = LAYOUTS[layout];
+  const d = settings?.display ?? { layout: "yoko", bg: "#16161d", font_head: 22, font_power: 72, font_set: 30 };
+  const layout = LAYOUTS[d.layout] ? d.layout : "yoko";
+
+  // 窓の大きさを中身に合わせる（字の大きさや置き方が変わっても余白が同じ）
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const w = Math.ceil(el.scrollWidth + PAD.x * 2);
+    const h = Math.ceil(el.scrollHeight + PAD.y * 2);
+    const key = `${w}x${h}`;
+    if (key === lastSize.current) return;
+    lastSize.current = key;
     getCurrentWindow().setSize(new LogicalSize(w, h)).catch(() => {});
-    store.set("srw_layout", layout);
-  }, [layout]);
-  useEffect(() => store.set("srw_bg", bg), [bg]);
+  });
 
   useEffect(() => {
     if (!menu) return;
@@ -96,6 +102,14 @@ export default function DisplayApp() {
       window.removeEventListener("blur", close);
     };
   }, [menu]);
+
+  const change = async (patch) => {
+    setMenu(null);
+    const cur = await invoke("get_settings");
+    const next = { ...cur, display: { ...cur.display, ...patch } };
+    await invoke("save_settings", { settings: next });
+    setSettings(next);
+  };
 
   const onMouseDown = (e) => {
     if (e.button === 0 && !menu) getCurrentWindow().startDragging().catch(() => {});
@@ -112,40 +126,47 @@ export default function DisplayApp() {
   const power = isX ? xp : isBankara ? udemae : null;
   const showSet = set && mode !== "bankara_open" && mode !== "other";
   const note = !s ? "" : !s.source ? "N Air か OBS が見つからない" : s.events.length === 0 ? "まだ試合を読んでいない" : "";
+  const powerEl = power != null && <Power power={power} isX={isX} isBankara={isBankara} size={d.font_power} />;
 
   return (
-    <div className={`disp disp-${layout}`} style={{ background: bg }} onMouseDown={onMouseDown} onContextMenu={onContextMenu}>
-      <div className="disp-top">
-        <span className="disp-head">{head || " "}</span>
-        {power != null && (
-          <span className="disp-power">
-            {isX ? power.toFixed(1) : power}
-            {isBankara && <small>p</small>}
+    <div
+      className={`disp disp-${layout}`}
+      style={{ background: d.bg, padding: `${PAD.y}px ${PAD.x}px` }}
+      onMouseDown={onMouseDown}
+      onContextMenu={onContextMenu}
+    >
+      {/* 横長は 2 段組み（左: モードとルールの下に勝敗、右: パワー）。縦長は上から順に */}
+      <div className="disp-box" ref={box}>
+        <div className="disp-left">
+          <span className="disp-head" style={{ fontSize: d.font_head }}>
+            {head || " "}
           </span>
-        )}
+          {layout === "tate" && powerEl}
+          {showSet && (
+            <span className="disp-set" style={{ fontSize: d.font_set }}>
+              {set.wins}勝 {set.losses}敗
+            </span>
+          )}
+          {note && <span className="disp-note">{note}</span>}
+        </div>
+        {layout === "yoko" && powerEl}
       </div>
-      {showSet && (
-        <span className="disp-set">
-          {set.wins}勝 {set.losses}敗
-        </span>
-      )}
-      {note && <span className="disp-note">{note}</span>}
 
       {menu && (
         <div className="ctx" style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.stopPropagation()}>
-          {Object.entries(LAYOUTS).map(([id, l]) => (
-            <button key={id} className={layout === id ? "on" : ""} onClick={() => (setLayout(id), setMenu(null))}>
-              {l.name}
+          {Object.entries(LAYOUTS).map(([id, name]) => (
+            <button key={id} className={layout === id ? "on" : ""} onClick={() => change({ layout: id })}>
+              {name}
             </button>
           ))}
           <hr />
           {BGS.map(([c, name]) => (
-            <button key={c} className={bg === c ? "on" : ""} onClick={() => (setBg(c), setMenu(null))}>
+            <button key={c} className={d.bg === c ? "on" : ""} onClick={() => change({ bg: c })}>
               背景: {name}
             </button>
           ))}
           <hr />
-          <button onClick={() => (invoke("open_settings"), setMenu(null))}>設定・見本を開く</button>
+          <button onClick={() => (invoke("open_settings"), setMenu(null))}>設定・見本を開く（字の大きさもここで）</button>
           <button onClick={() => getCurrentWindow().minimize()}>しまう</button>
           <button onClick={() => getCurrentWindow().close()}>終了</button>
         </div>

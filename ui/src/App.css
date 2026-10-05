@@ -328,12 +328,14 @@ body.display-window,
 body.display-window #root {
   height: 100vh;
   overflow: hidden;
+  background: transparent;
 }
 
 .disp {
   width: 100%;
   height: 100vh;
   box-sizing: border-box;
+  align-items: flex-start;
   color: #fff;
   font-family: "M PLUS 1p", "Yu Gothic UI", "Meiryo", sans-serif;
   font-weight: 900;
@@ -346,40 +348,24 @@ body.display-window #root {
   cursor: default;
   overflow: hidden;
 }
-.disp-yoko {
-  padding: 0 28px;
-  gap: 14px;
-}
-.disp-yoko .disp-top {
-  display: flex;
-  align-items: baseline;
-  gap: 22px;
-}
-.disp-yoko .disp-head {
-  font-size: 22px;
-}
-.disp-tate {
-  padding: 24px 28px;
+.disp-box {
+  display: inline-flex;
+  flex-direction: column;
   gap: 10px;
 }
-.disp-tate .disp-top {
+.disp-yoko .disp-box {
+  flex-direction: row;
+  align-items: center;
+  gap: 28px;
+}
+.disp-left {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 .disp-head {
-  font-size: 20px;
   font-weight: 700;
   color: #c8c8d2;
-}
-.disp-power {
-  font-size: 72px;
-}
-.disp-power small {
-  font-size: 30px;
-}
-.disp-set {
-  font-size: 30px;
 }
 .disp-note {
   font-size: 14px;

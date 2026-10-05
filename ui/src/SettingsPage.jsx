@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { LAYOUTS, BGS } from "./DisplayApp.jsx";
 
 export default function SettingsPage() {
   const [form, setForm] = useState(null);
@@ -25,6 +26,7 @@ export default function SettingsPage() {
   if (!form) return <div className="page">読み込み中…</div>;
 
   const set = (k, v) => setForm({ ...form, [k]: v });
+  const setD = (k, v) => setForm({ ...form, display: { ...form.display, [k]: v } });
   const needsRestart = saved && (form.port !== saved.port || form.width !== saved.width);
   const obsChanged =
     saved && (form.capture_from !== saved.capture_from || form.obs_port !== saved.obs_port || form.obs_password !== saved.obs_password);
@@ -59,6 +61,39 @@ export default function SettingsPage() {
           <div className="small">「見本の登録」で足す。数字は 1 枚の画面に出ている字しか足せないので、何枚かの画面から足す</div>
         </>
       )}
+
+      <h3>見せる窓</h3>
+      <div className="settings-form">
+        <label>
+          置き方
+          <select value={form.display.layout} onChange={(e) => setD("layout", e.target.value)}>
+            {Object.entries(LAYOUTS).map(([id, name]) => (
+              <option key={id} value={id}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          背景
+          <select value={form.display.bg} onChange={(e) => setD("bg", e.target.value)}>
+            {BGS.map(([c, name]) => (
+              <option key={c} value={c}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          字の大きさ（px）: モードとルール
+          <input type="number" min="8" max="200" value={form.display.font_head} onChange={(e) => setD("font_head", Number(e.target.value))} />
+          　パワー
+          <input type="number" min="8" max="400" value={form.display.font_power} onChange={(e) => setD("font_power", Number(e.target.value))} />
+          　勝敗
+          <input type="number" min="8" max="200" value={form.display.font_set} onChange={(e) => setD("font_set", Number(e.target.value))} />
+          <span className="small">　窓の大きさは字に合わせて変わる。「残す」ですぐ効く</span>
+        </label>
+      </div>
 
       <h3>設定</h3>
       <div className="settings-form">

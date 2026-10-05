@@ -29,6 +29,27 @@ pub struct Settings {
     /// OBS の obs-websocket の番号とパスワード（OBS の「ツール → WebSocket サーバー設定」）
     pub obs_port: u16,
     pub obs_password: String,
+    /// 見せる窓の見た目（見せる窓の右クリックと、設定の窓から変える。すぐ効く）
+    pub display: DisplaySettings,
+}
+
+/// 見せる窓の見た目。字の大きさは論理 px。窓の大きさは中身に合わせて決まる
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DisplaySettings {
+    /// "yoko"（横長: 左にモードとルール・勝敗、右にパワー）か "tate"（縦長: 上から順）
+    pub layout: String,
+    /// CSS の色。"transparent" なら窓を透かす（配信ソフトのウィンドウキャプチャで透過を許可する）
+    pub bg: String,
+    pub font_head: u32,
+    pub font_power: u32,
+    pub font_set: u32,
+}
+
+impl Default for DisplaySettings {
+    fn default() -> Self {
+        DisplaySettings { layout: "yoko".into(), bg: "#16161d".into(), font_head: 22, font_power: 72, font_set: 30 }
+    }
 }
 
 impl Default for Settings {
@@ -42,6 +63,7 @@ impl Default for Settings {
             capture_from: CaptureFrom::Auto,
             obs_port: crate::obs::DEFAULT_PORT,
             obs_password: String::new(),
+            display: DisplaySettings::default(),
         }
     }
 }
