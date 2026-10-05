@@ -1,9 +1,11 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { Menu, MenuItem, CheckMenuItem, PredefinedMenuItem } from "@tauri-apps/api/menu";
 
 // 見せる窓: 配信ソフトのウィンドウキャプチャで配信に載せる前提の、字だけの小さな窓。
 // 枠は無く、左ドラッグで動かし、右クリックのメニューで置き方・背景を変える（字の大きさは設定の窓で）。
+// メニューは OS のもの（窓が小さいので、窓の中に描くと収まらない）。
 // 置き方・背景・字の大きさは settings.json の `display` に入り、設定の窓と共有する。窓の大きさは中身に合わせる。
 
 const MODE_NAMES = { x: "Xマッチ", bankara_challenge: "バンカラ チャレンジ", bankara_open: "バンカラ オープン", bankara: "バンカラ", other: "" };
@@ -59,7 +61,6 @@ function Power({ power, isX, isBankara, size }) {
 export default function DisplayApp() {
   const [s, setS] = useState(null);
   const [settings, setSettings] = useState(null);
-  const [menu, setMenu] = useState(null);
   const box = useRef(null);
   const lastSize = useRef("");
 
@@ -92,19 +93,7 @@ export default function DisplayApp() {
     getCurrentWindow().setSize(new LogicalSize(w, h)).catch(() => {});
   });
 
-  useEffect(() => {
-    if (!menu) return;
-    const close = () => setMenu(null);
-    window.addEventListener("mousedown", close);
-    window.addEventListener("blur", close);
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("blur", close);
-    };
-  }, [menu]);
-
   const change = async (patch) => {
-    setMenu(null);
     const cur = await invoke("get_settings");
     const next = { ...cur, display: { ...cur.display, ...patch } };
     await invoke("save_settings", { settings: next });
@@ -112,11 +101,24 @@ export default function DisplayApp() {
   };
 
   const onMouseDown = (e) => {
-    if (e.button === 0 && !menu) getCurrentWindow().startDragging().catch(() => {});
+    if (e.button === 0) getCurrentWindow().startDragging().catch(() => {});
   };
-  const onContextMenu = (e) => {
+  const onContextMenu = async (e) => {
     e.preventDefault();
-    setMenu({ x: e.clientX, y: e.clientY });
+    const items = [];
+    for (const [id, name] of Object.entries(LAYOUTS)) {
+      items.push(await CheckMenuItem.new({ text: name, checked: layout === id, action: () => change({ layout: id }) }));
+    }
+    items.push(await PredefinedMenuItem.new({ item: "Separator" }));
+    for (const [c, name] of BGS) {
+      items.push(await CheckMenuItem.new({ text: `背景: ${name}`, checked: d.bg === c, action: () => change({ bg: c }) }));
+    }
+    items.push(await PredefinedMenuItem.new({ item: "Separator" }));
+    items.push(await MenuItem.new({ text: "設定・見本を開く（字の大きさもここで）", action: () => invoke("open_settings") }));
+    items.push(await MenuItem.new({ text: "しまう", action: () => getCurrentWindow().minimize() }));
+    items.push(await MenuItem.new({ text: "終了", action: () => getCurrentWindow().close() }));
+    const menu = await Menu.new({ items });
+    await menu.popup();
   };
 
   const { mode, rule, xp, udemae, set } = pick(s?.events ?? []);
@@ -151,26 +153,6 @@ export default function DisplayApp() {
         </div>
         {layout === "yoko" && powerEl}
       </div>
-
-      {menu && (
-        <div className="ctx" style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.stopPropagation()}>
-          {Object.entries(LAYOUTS).map(([id, name]) => (
-            <button key={id} className={layout === id ? "on" : ""} onClick={() => change({ layout: id })}>
-              {name}
-            </button>
-          ))}
-          <hr />
-          {BGS.map(([c, name]) => (
-            <button key={c} className={d.bg === c ? "on" : ""} onClick={() => change({ bg: c })}>
-              背景: {name}
-            </button>
-          ))}
-          <hr />
-          <button onClick={() => (invoke("open_settings"), setMenu(null))}>設定・見本を開く（字の大きさもここで）</button>
-          <button onClick={() => getCurrentWindow().minimize()}>しまう</button>
-          <button onClick={() => getCurrentWindow().close()}>終了</button>
-        </div>
-      )}
     </div>
   );
 }

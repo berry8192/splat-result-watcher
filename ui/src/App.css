@@ -373,43 +373,6 @@ body.display-window #root {
   color: #9a9aa8;
 }
 
-/* 右クリックのメニュー */
-.ctx {
-  position: fixed;
-  z-index: 10;
-  min-width: 180px;
-  padding: 4px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  font: 13px "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
-  color: var(--text);
-  white-space: nowrap;
-}
-.ctx button {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: 0;
-  padding: 6px 10px;
-  border-radius: 4px;
-}
-.ctx button:hover {
-  background: #2a2a36;
-}
-.ctx button.on::before {
-  content: "✓ ";
-}
-.ctx button:not(.on)::before {
-  content: "　";
-}
-.ctx hr {
-  border: 0;
-  border-top: 1px solid var(--line);
-  margin: 4px 0;
-}
-
 .settings-form label {
   display: block;
   margin: 8px 0;
