@@ -1,7 +1,17 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "GUI の窓に既定の権限だけを与える（命令は自前の invoke だけ）",
-  "windows": ["main", "settings"],
-  "permissions": ["core:default"]
+  "description": "GUI の窓の権限。見せる窓は枠が無いので、動かす・大きさを変える・閉じるを JS から行う",
+  "windows": [
+    "main",
+    "settings"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-size",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-set-always-on-top"
+  ]
 }

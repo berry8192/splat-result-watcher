@@ -1,59 +1,76 @@
 import React, { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 
-const STAGE_NAMES = {
-  no_signal: "映像なし",
-  idle: "待機",
-  in_battle: "バトル中",
-  reading: "結果を読み中",
-  post_match: "試合後",
-};
-const MODE_NAMES = {
-  x: "Xマッチ",
-  bankara_challenge: "バンカラ(チャレンジ)",
-  bankara_open: "バンカラ(オープン)",
-  other: "その他",
-};
-const RULE_NAMES = { area: "ガチエリア", yagura: "ガチヤグラ", hoko: "ガチホコ", asari: "ガチアサリ" };
-const OUTCOME_NAMES = {
-  win: "WIN",
-  lose: "LOSE",
-  no_contest: "無効試合",
-  lose_uncounted: "LOSE（数えない）",
+// 見せる窓: 配信ソフトのウィンドウキャプチャで配信に載せる前提の、字だけの小さな窓。
+// 枠は無く、左ドラッグで動かし、右クリックのメニューで置き方・背景・設定を変える。
+
+const MODE_NAMES = { x: "Xマッチ", bankara_challenge: "バンカラ チャレンジ", bankara_open: "バンカラ オープン", bankara: "バンカラ", other: "" };
+const RULE_NAMES = { area: "ガチエリア", yagura: "ガチヤグラ", hoko: "ガチホコ", asari: "ガチアサリ", turf_war: "ナワバリバトル" };
+/** 置き方ごとの窓の大きさ（論理 px） */
+const LAYOUTS = { yoko: { name: "横長", w: 560, h: 150 }, tate: { name: "縦長", w: 320, h: 300 } };
+const BGS = [
+  ["#16161d", "暗い"],
+  ["#000000", "黒"],
+  ["#00ff00", "緑（クロマキー用）"],
+  ["#0000ff", "青（クロマキー用）"],
+];
+
+const store = {
+  get(k, d) {
+    try {
+      return localStorage.getItem(k) ?? d;
+    } catch {
+      return d;
+    }
+  },
+  set(k, v) {
+    try {
+      localStorage.setItem(k, v);
+    } catch {
+      /* 覚えられなくても動く */
+    }
+  },
 };
 
-/** 出来事（新しい順）から、見せるものを拾う */
+/** 出来事（新しい順）から、見せるものを拾う。それぞれ一番新しいものだけ */
 function pick(events) {
-  const first = (f) => events.find(f);
-  const result = first((e) => e.type === "result");
-  const xp = first((e) => e.type === "power" && e.kind === "x");
-  const udemae = first((e) => e.type === "power" && e.kind === "udemae");
-  const progress = first((e) => e.type === "set_progress");
-  return { result, xp, udemae, progress };
-}
-
-function time(at) {
-  if (!at) return "";
-  const d = new Date(at);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
-
-function delta(before, after) {
-  if (before == null || after == null) return null;
-  const d = Math.round((after - before) * 10) / 10;
-  return d >= 0 ? `+${d}` : `${d}`;
+  let mode = null;
+  let rule = null;
+  let xp = null;
+  let udemae = null;
+  let set = null;
+  for (const e of events) {
+    if (mode == null && (e.type === "result" || e.type === "battle_started") && e.mode) mode = e.mode;
+    if (mode == null && e.type === "observed") mode = e.kind === "x" ? "x" : "bankara";
+    if (rule == null && e.rule && (e.type === "result" || e.type === "battle_started" || e.type === "observed")) rule = e.rule;
+    if (e.type === "power" && !e.calibrating && e.after != null) {
+      if (e.kind === "x" && xp == null) xp = e.after;
+      if (e.kind === "udemae" && udemae == null) udemae = e.after;
+    }
+    if (e.type === "observed" && e.value != null) {
+      if (e.kind === "x" && xp == null) xp = e.value;
+      if (e.kind === "udemae" && udemae == null) udemae = e.value;
+    }
+    if (set == null && e.wins != null && e.losses != null && (e.type === "set_progress" || e.type === "observed")) {
+      set = { wins: e.wins, losses: e.losses };
+    }
+    // パワーの変動が出たらセットは終わっている（3 勝目・3 敗目の後は進行の画面が出ない）。次のセットが見えるまで出さない
+    if (set == null && e.type === "power" && !e.calibrating && e.before != null) set = { done: true };
+  }
+  if (set?.done) set = null;
+  return { mode, rule, xp, udemae, set };
 }
 
 export default function DisplayApp() {
   const [s, setS] = useState(null);
-  const [error, setError] = useState(null);
+  const [layout, setLayout] = useState(() => (LAYOUTS[store.get("srw_layout", "yoko")] ? store.get("srw_layout", "yoko") : "yoko"));
+  const [bg, setBg] = useState(() => store.get("srw_bg", BGS[0][0]));
+  const [menu, setMenu] = useState(null);
 
   useEffect(() => {
     let alive = true;
-    const tick = () =>
-      invoke("status")
-        .then((st) => alive && (setS(st), setError(null)))
-        .catch((e) => alive && setError(String(e)));
+    const tick = () => invoke("status").then((st) => alive && setS(st)).catch(() => {});
     tick();
     const id = setInterval(tick, 1000);
     return () => {
@@ -62,75 +79,78 @@ export default function DisplayApp() {
     };
   }, []);
 
-  if (!s) return <div className="display">{error ?? "読み込み中…"}</div>;
-  const { result, xp, udemae, progress } = pick(s.events);
-  const xd = xp && !xp.calibrating ? delta(xp.before, xp.after) : null;
-  const ud = udemae ? delta(udemae.before, udemae.after) : null;
+  // 置き方に合わせて窓の大きさを変える
+  useEffect(() => {
+    const { w, h } = LAYOUTS[layout];
+    getCurrentWindow().setSize(new LogicalSize(w, h)).catch(() => {});
+    store.set("srw_layout", layout);
+  }, [layout]);
+  useEffect(() => store.set("srw_bg", bg), [bg]);
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    window.addEventListener("mousedown", close);
+    window.addEventListener("blur", close);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("blur", close);
+    };
+  }, [menu]);
+
+  const onMouseDown = (e) => {
+    if (e.button === 0 && !menu) getCurrentWindow().startDragging().catch(() => {});
+  };
+  const onContextMenu = (e) => {
+    e.preventDefault();
+    setMenu({ x: e.clientX, y: e.clientY });
+  };
+
+  const { mode, rule, xp, udemae, set } = pick(s?.events ?? []);
+  const head = [MODE_NAMES[mode] ?? "", RULE_NAMES[rule] ?? ""].filter(Boolean).join(" ");
+  const isX = mode === "x";
+  const isBankara = mode != null && mode.startsWith("bankara");
+  const power = isX ? xp : isBankara ? udemae : null;
+  const showSet = set && mode !== "bankara_open" && mode !== "other";
+  const note = !s ? "" : !s.source ? "N Air か OBS が見つからない" : s.events.length === 0 ? "まだ試合を読んでいない" : "";
 
   return (
-    <div className="display">
-      <div className="display-head">
-        <span className={`stage small-stage stage-${s.stage}`}>{STAGE_NAMES[s.stage] ?? s.stage}</span>
-        <span className="small">
-          {s.clients > 0 ? `受け手 ${s.clients}` : "受け手なし"}
-          {s.server_error ? "・サーバ停止" : ""}
-        </span>
-        <button className="gear" onClick={() => invoke("open_settings")} title="設定・見本の登録">
-          設定・見本
-        </button>
+    <div className={`disp disp-${layout}`} style={{ background: bg }} onMouseDown={onMouseDown} onContextMenu={onContextMenu}>
+      <div className="disp-top">
+        <span className="disp-head">{head || " "}</span>
+        {power != null && (
+          <span className="disp-power">
+            {isX ? power.toFixed(1) : power}
+            {isBankara && <small>p</small>}
+          </span>
+        )}
       </div>
+      {showSet && (
+        <span className="disp-set">
+          {set.wins}勝 {set.losses}敗
+        </span>
+      )}
+      {note && <span className="disp-note">{note}</span>}
 
-      {s.template_gaps.length > 0 && (
-        <div className="gaps-note" title={s.template_gaps.join(" / ")}>
-          見本が足りない（{s.template_gaps.length} か所）。「設定・見本」で確かめる
+      {menu && (
+        <div className="ctx" style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.stopPropagation()}>
+          {Object.entries(LAYOUTS).map(([id, l]) => (
+            <button key={id} className={layout === id ? "on" : ""} onClick={() => (setLayout(id), setMenu(null))}>
+              {l.name}
+            </button>
+          ))}
+          <hr />
+          {BGS.map(([c, name]) => (
+            <button key={c} className={bg === c ? "on" : ""} onClick={() => (setBg(c), setMenu(null))}>
+              背景: {name}
+            </button>
+          ))}
+          <hr />
+          <button onClick={() => (invoke("open_settings"), setMenu(null))}>設定・見本を開く</button>
+          <button onClick={() => getCurrentWindow().minimize()}>しまう</button>
+          <button onClick={() => getCurrentWindow().close()}>終了</button>
         </div>
       )}
-
-      {result ? (
-        <div className="last-result">
-          <div className={`outcome outcome-${result.outcome}`}>{OUTCOME_NAMES[result.outcome] ?? result.outcome}</div>
-          <div className="small">
-            {MODE_NAMES[result.mode] ?? result.mode ?? ""} {RULE_NAMES[result.rule] ?? ""} {time(result.ended_at)}
-          </div>
-        </div>
-      ) : (
-        <div className="last-result small">まだ試合を読んでいない</div>
-      )}
-
-      <table className="display-facts">
-        <tbody>
-          {progress && (
-            <tr>
-              <th>進行</th>
-              <td>
-                {progress.wins} 勝 {progress.losses} 敗
-              </td>
-            </tr>
-          )}
-          {xp && (
-            <tr>
-              <th>Xパワー</th>
-              <td>
-                {xp.calibrating ? (
-                  "計測中"
-                ) : (
-                  <>
-                    <b>{xp.after?.toFixed(1)}</b> {xd && <span className={xd.startsWith("+") ? "good" : "bad"}>{xd}</span>}
-                  </>
-                )}
-              </td>
-            </tr>
-          )}
-          {udemae && (
-            <tr>
-              <th>ウデマエ</th>
-              <td>
-                <b>{udemae.after}p</b> {ud && <span className={ud.startsWith("+") ? "good" : "bad"}>{ud}</span>}
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
     </div>
   );
 }

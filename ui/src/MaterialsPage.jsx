@@ -3,30 +3,26 @@ import { invoke } from "@tauri-apps/api/core";
 
 /** どうそろうか */
 const HOW = {
-  shape: "見本なしでも形と色で読める。確かめられたら自動で足す",
-  sum: "手がかりの数字で推測し、計算が合ったら自動で足す",
+  shape: "見本が無くても形と色で読める。別の画面で確かめられたら自動で足す",
+  sum: "手がかりの数字で推測し、「動く前 + 増減 = 動いた後」が合ったら自動で足す",
   same_value: "試合後の値とメニューの値が同じことで自動で足す",
-  manual: "手で登録する（「見本の登録」で）",
+  manual: "手で登録する（「見本の登録」で、その画面を映して登録）",
 };
-const HOW_SHORT = { shape: "形", sum: "計算", same_value: "同じ値", manual: "手で" };
 
 const have = (i) => i.manual + i.auto > 0;
+const missing = (s, pred) => s.items.filter((i) => !have(i) && pred(i));
 
-function Chip({ i }) {
-  const cls = i.manual > 0 ? "chip manual" : i.auto > 0 ? "chip auto" : i.how === "manual" ? "chip missing-manual" : "chip missing";
-  const title =
-    `${i.name}（${i.pool}）: 手で ${i.manual}・自動 ${i.auto}。` + HOW[i.how] + (i.required ? "" : "（無くても読める・あると確か）");
-  return (
-    <span className={cls} title={title}>
-      {i.name}
-      {i.auto > 0 && i.manual === 0 && <em>自動</em>}
-    </span>
-  );
+/** 画面ごとの状態: DONE（無いと読めないものが全部ある）/ WAIT（自動で足されるのを待つ）/ MANUAL（手で取る必要あり） */
+function status(s) {
+  if (s.needs_manual) return "MANUAL";
+  if (s.ready) return "DONE";
+  return "WAIT";
 }
 
 export default function MaterialsPage() {
   const [list, setList] = useState(null);
   const [error, setError] = useState(null);
+  const [open, setOpen] = useState(() => new Set());
 
   useEffect(() => {
     let alive = true;
@@ -45,74 +41,54 @@ export default function MaterialsPage() {
 
   if (!list) return <div className="page">{error ?? "読み込み中…"}</div>;
 
-  const manualLeft = list.flatMap((s) => s.items.filter((i) => i.how === "manual" && i.required && !have(i)).map((i) => ({ s, i })));
-  const autoLeft = list.flatMap((s) => s.items.filter((i) => i.how !== "manual" && i.how !== "shape" && i.required && !have(i)));
+  const manualCount = list.reduce((n, s) => n + missing(s, (i) => i.how === "manual" && i.required).length, 0);
+  const waitCount = list.reduce((n, s) => n + missing(s, (i) => i.how !== "manual" && i.required).length, 0);
+  const toggle = (name) =>
+    setOpen((o) => {
+      const n = new Set(o);
+      n.has(name) ? n.delete(name) : n.add(name);
+      return n;
+    });
 
   return (
     <div className="page materials">
-      <div className="summary">
-        {manualLeft.length === 0 ? (
-          <div className="good">手で取る必要があるものは、もう無い</div>
-        ) : (
-          <div>
-            <b>手で取る必要があるもの</b>:{" "}
-            {manualLeft.map(({ s, i }) => `${i.name}（${s.name}）`).join("、")}
-            <div className="small">その画面を映して、「見本の登録」の「直近の画面から選ぶ」で戻って登録する</div>
-          </div>
-        )}
-        <div>
-          {autoLeft.length === 0 ? (
-            <span className="good">自動でそろうものも、全部そろった</span>
-          ) : (
-            <span>
-              自動でそろうのを待っているもの: <b>{autoLeft.length}</b> 字（遊んでいるうちに、計算や同じ値で足される）
-            </span>
-          )}
-        </div>
-        <div className="legend small">
-          <span className="chip manual">手で登録済み</span>
-          <span className="chip auto">
-            自動で足された<em>自動</em>
-          </span>
-          <span className="chip missing">まだ（自動でそろう）</span>
-          <span className="chip missing-manual">まだ（手で取る）</span>
-          　字にマウスを乗せると詳しく出る
-        </div>
+      <div className="mat-sum">
+        <span>
+          {manualCount === 0 ? "MANUAL は無し" : `MANUAL は ${manualCount} 件`}。{waitCount === 0 ? "WAIT も無し" : `WAIT は ${waitCount} 字（遊んでいるうちに足される）`}
+        </span>
+        <span className="small">行を押すと、映し方と足され方が出る</span>
       </div>
-
-      {list.map((s) => (
-        <div key={s.name} className={`screen-card ${s.needs_manual ? "needs-manual" : s.ready ? "ready" : "waiting"}`}>
-          <div className="screen-head">
-            <b>{s.name}</b>
-            <span className="badge">{s.needs_manual ? "手で取る必要あり" : s.ready ? "そろった" : "自動でそろう途中"}</span>
-          </div>
-          <div className="small">映し方: {s.show}</div>
-          <div className="small">読めるもの: {s.gives}</div>
-          {groups(s.items).map((g) => (
-            <div key={g.key} className="chips">
-              <span className="how small">
-                {HOW_SHORT[g.how]}
-                {g.required ? "" : "・任意"}
+      {list.map((s) => {
+        const st = status(s);
+        const wait = missing(s, (i) => i.how !== "manual" && i.required);
+        const manual = missing(s, (i) => i.how === "manual" && i.required);
+        const optional = missing(s, (i) => !i.required);
+        const hows = [...new Set(s.items.map((i) => i.how))];
+        return (
+          <div key={s.name} className={`mat-row ${open.has(s.name) ? "open" : ""}`}>
+            <button className="mat-line" onClick={() => toggle(s.name)}>
+              <span className={`mat-dot ${st.toLowerCase()}`} />
+              <span className="mat-name">{s.name}</span>
+              <span className={`mat-st ${st.toLowerCase()}`}>
+                {st}
+                {st === "WAIT" && <b>{wait.map((i) => i.name).join(" ")}</b>}
+                {st === "MANUAL" && <b>{manual.map((i) => i.name).join(" ")}</b>}
               </span>
-              {g.items.map((i) => (
-                <Chip key={i.pool + i.label} i={i} />
-              ))}
-            </div>
-          ))}
-        </div>
-      ))}
+            </button>
+            {open.has(s.name) && (
+              <div className="mat-detail">
+                <div>映し方: {s.show}</div>
+                <div>読めるもの: {s.gives}</div>
+                {hows.map((h) => (
+                  <div key={h}>足され方: {HOW[h]}</div>
+                ))}
+                {optional.length > 0 && <div>無くても読めるもの（あると確か）: {optional.map((i) => i.name).join(" ")}</div>}
+                {wait.length > 0 && st !== "WAIT" && <div>待ち: {wait.map((i) => i.name).join(" ")}</div>}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
-}
-
-/** 同じ見本の山・同じそろい方をまとめて 1 行に */
-function groups(items) {
-  const out = [];
-  for (const i of items) {
-    const key = `${i.pool}/${i.how}`;
-    const g = out.find((g) => g.key === key);
-    if (g) g.items.push(i);
-    else out.push({ key, how: i.how, required: i.required, items: [i] });
-  }
-  return out;
 }

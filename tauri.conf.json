@@ -13,11 +13,12 @@
       {
         "label": "main",
         "title": "splat-result-watcher",
-        "width": 380,
-        "height": 300,
-        "minWidth": 300,
-        "minHeight": 220,
-        "resizable": true
+        "width": 560,
+        "height": 150,
+        "minWidth": 200,
+        "minHeight": 100,
+        "resizable": false,
+        "decorations": false
       }
     ],
     "security": {
@@ -26,6 +27,8 @@
   },
   "bundle": {
     "active": false,
-    "icon": ["icons/icon.ico"]
+    "icon": [
+      "icons/icon.ico"
+    ]
   }
 }

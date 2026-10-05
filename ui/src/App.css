@@ -312,64 +312,116 @@ table th {
   font-size: 12px;
 }
 
-/* ---- 勝敗などを見せる小さな窓 ---- */
-.display {
-  padding: 10px 12px;
+/* ---- 見せる窓（字だけ。配信ソフトのウィンドウキャプチャで載せる） ---- */
+@font-face {
+  font-family: "M PLUS 1p";
+  font-weight: 700;
+  src: url(/fonts/MPLUS1p-Bold.ttf) format("truetype");
 }
-
-.display-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.display-head .gear {
-  margin-left: auto;
-  font-size: 12px;
-  padding: 2px 8px;
-}
-
-.small-stage {
-  font-size: 14px;
-  padding: 2px 10px;
-  margin: 0;
-}
-
-.last-result {
-  margin: 10px 0 6px;
-}
-
-.outcome {
-  font-size: 40px;
+@font-face {
+  font-family: "M PLUS 1p";
   font-weight: 900;
-  line-height: 1.1;
-  letter-spacing: 1px;
+  src: url(/fonts/MPLUS1p-Black.ttf) format("truetype");
 }
 
-.outcome-win {
-  color: var(--accent);
-}
-.outcome-lose {
-  color: #8c7dff;
-}
-.outcome-no_contest,
-.outcome-lose_uncounted {
-  color: var(--dim);
-  font-size: 26px;
+body.display-window,
+body.display-window #root {
+  height: 100vh;
+  overflow: hidden;
 }
 
-.display-facts {
-  font-size: 16px;
+.disp {
+  width: 100%;
+  height: 100vh;
+  box-sizing: border-box;
+  color: #fff;
+  font-family: "M PLUS 1p", "Yu Gothic UI", "Meiryo", sans-serif;
+  font-weight: 900;
+  line-height: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  white-space: nowrap;
+  user-select: none;
+  cursor: default;
+  overflow: hidden;
 }
-
-.display-facts b {
+.disp-yoko {
+  padding: 0 28px;
+  gap: 14px;
+}
+.disp-yoko .disp-top {
+  display: flex;
+  align-items: baseline;
+  gap: 22px;
+}
+.disp-yoko .disp-head {
+  font-size: 22px;
+}
+.disp-tate {
+  padding: 24px 28px;
+  gap: 10px;
+}
+.disp-tate .disp-top {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.disp-head {
   font-size: 20px;
+  font-weight: 700;
+  color: #c8c8d2;
+}
+.disp-power {
+  font-size: 72px;
+}
+.disp-power small {
+  font-size: 30px;
+}
+.disp-set {
+  font-size: 30px;
+}
+.disp-note {
+  font-size: 14px;
+  font-weight: 700;
+  color: #9a9aa8;
 }
 
-.gaps-note {
-  margin-top: 6px;
-  font-size: 12px;
-  color: #ffb84d;
+/* 右クリックのメニュー */
+.ctx {
+  position: fixed;
+  z-index: 10;
+  min-width: 180px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: 13px "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+  color: var(--text);
+  white-space: nowrap;
+}
+.ctx button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+.ctx button:hover {
+  background: #2a2a36;
+}
+.ctx button.on::before {
+  content: "✓ ";
+}
+.ctx button:not(.on)::before {
+  content: "　";
+}
+.ctx hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 4px 0;
 }
 
 .settings-form label {
@@ -433,76 +485,71 @@ table th {
   color: #c87800;
 }
 
-.materials .summary {
-  margin-bottom: 12px;
+/* ---- そろい具合: 1 画面 1 行。DONE / WAIT / MANUAL ---- */
+.mat-sum {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.screen-card {
-  border: 1px solid #555;
-  border-left-width: 5px;
-  border-radius: 4px;
-  padding: 6px 10px;
-  margin-bottom: 8px;
-}
-.screen-card.ready {
-  border-left-color: #3a9a5a;
-}
-.screen-card.waiting {
-  border-left-color: #4a7ec8;
-}
-.screen-card.needs-manual {
-  border-left-color: #d08a00;
-}
-.screen-head {
-  display: flex;
-  gap: 10px;
+  justify-content: space-between;
   align-items: baseline;
+  gap: 16px;
+  padding: 4px 8px 12px;
+  color: var(--dim);
+  font-size: 15px;
 }
-.screen-head .badge {
-  font-size: 12px;
-  opacity: 0.8;
+.mat-row {
+  border-bottom: 1px solid #26262f;
 }
-.chips {
+.mat-row.open {
+  background: #1b1b24;
+}
+.mat-line {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 4px;
   align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 11px 8px;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  text-align: left;
+  font-size: 14px;
 }
-.chips .how {
-  min-width: 5em;
+.mat-line:hover {
+  background: #1b1b24;
 }
-.chip {
-  display: inline-block;
-  padding: 1px 7px;
-  border-radius: 10px;
-  font-size: 13px;
-  border: 1px solid transparent;
+.mat-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex: none;
+  box-sizing: border-box;
 }
-.chip em {
-  margin-left: 3px;
-  font-size: 10px;
-  font-style: normal;
+.mat-dot.done {
+  background: var(--text);
 }
-.chip.manual {
-  background: #2f7a48;
-  color: #fff;
+.mat-dot.wait {
+  border: 2px solid var(--dim);
 }
-.chip.auto {
-  background: #2f5f9a;
-  color: #fff;
+.mat-dot.manual {
+  background: #ffb84d;
 }
-.chip.missing {
-  border-color: #777;
-  color: #999;
-  border-style: dashed;
+.mat-name {
+  flex: 1;
 }
-.chip.missing-manual {
-  border-color: #d08a00;
-  color: #d08a00;
+.mat-st {
+  color: var(--dim);
+  letter-spacing: 1px;
 }
-.legend .chip {
-  margin-right: 4px;
+.mat-st.manual {
+  color: #ffb84d;
+}
+.mat-st b {
+  margin-left: 10px;
+  color: var(--text);
+  font-weight: 700;
+  letter-spacing: 3px;
+}
+.mat-detail {
+  padding: 2px 8px 12px 32px;
+  color: var(--dim);
+  line-height: 1.6;
 }
