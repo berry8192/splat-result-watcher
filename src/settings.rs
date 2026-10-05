@@ -58,7 +58,7 @@ pub struct DisplaySettings {
 
 impl Default for DisplaySettings {
     fn default() -> Self {
-        DisplaySettings { layout: "yoko".into(), bg: "#16161d".into(), font_head: 22, font_power: 72, font_set: 30, outline_px: 0, outline_color: "#000000".into(), x_color: "#2bd9c4".into(), bankara_color: "#ff7a2e".into(), power_color: "#ffffff".into(), set_color: "#f3ea6a".into(), head_color: "#5aa9ff".into() }
+        DisplaySettings { layout: "yoko".into(), bg: "#16161d".into(), font_head: 22, font_power: 72, font_set: 30, outline_px: 0, outline_color: "#000000".into(), x_color: "#2bd9c4".into(), bankara_color: "#ff7a2e".into(), power_color: "#ffffff".into(), set_color: "#f3ea6a".into(), head_color: "#8fc5ff".into() }
     }
 }
 

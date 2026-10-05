@@ -31,7 +31,7 @@ const DEFAULT_DISPLAY = {
   bankara_color: "#ff7a2e",
   power_color: "#ffffff",
   set_color: "#f3ea6a",
-  head_color: "#5aa9ff",
+  head_color: "#8fc5ff",
 };
 
 /** 出来事（新しい順）から、見せるものを拾う。それぞれ一番新しいものだけ */
