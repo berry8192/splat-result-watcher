@@ -115,7 +115,8 @@ pub enum Seen {
     /// 試合と結び付かない、今見えた自分の値（`wins` / `losses` は進行が見えたときだけ）
     Observed { what: Observed, wins: Option<u8>, losses: Option<u8> },
     /// 進行の「WIN LOSE n - m」。`stamps` は WIN の判子の数（読めたときだけ）
-    Progress { wins: u8, losses: u8, stamps: Option<u8> },
+    /// `mode` はパネルの左上の黄色い札（「チャレンジ」「昇格戦」）で分かるモード（札があればバンカラ、無ければ X）
+    Progress { wins: u8, losses: u8, stamps: Option<u8>, mode: Option<Mode> },
 }
 
 /// `status` で流す段階
@@ -309,7 +310,13 @@ impl Game {
     }
 
     fn mode(&self) -> Option<Mode> {
-        self.header.map(|h| h.0).or(self.implied_mode).or(self.matching_mode)
+        let m = self.header.map(|h| h.0).or(self.implied_mode).or(self.matching_mode)?;
+        // 結果の帯（形で見たとき）・精算・進行では、バンカラのチャレンジとオープンを見分けられない。
+        // 直前のマッチングで○が無ければオープン
+        if m == Mode::BankaraChallenge && self.matching_mode == Some(Mode::BankaraOpen) {
+            return Some(Mode::BankaraOpen);
+        }
+        Some(m)
     }
 
     fn rule(&self) -> Option<Rule> {
@@ -590,6 +597,8 @@ impl Machine {
             match &seen {
                 Seen::XPower { .. } | Seen::Calibrating | Seen::Calibrated(_) => g.implied_mode = Some(Mode::X),
                 Seen::Udemae { .. } | Seen::UdemaeReset(_) => g.implied_mode = Some(Mode::BankaraChallenge),
+                // 結果の帯を飛ばして進行の画面に移ることがある（2026-10-06 の本番）。進行の札でモードが分かる
+                Seen::Progress { mode: Some(m), .. } if g.implied_mode.is_none() => g.implied_mode = Some(*m),
                 _ => {}
             }
         }
@@ -750,7 +759,7 @@ impl Machine {
 
         // 進行: WIN の判子の数と勝ち数が合うときだけ数える（数字は判子の後から変わる）
         g.post.progress.push(match seen {
-            Seen::Progress { wins, losses, stamps } if stamps.is_none_or(|s| s == *wins) => Some((*wins, *losses)),
+            Seen::Progress { wins, losses, stamps, .. } if stamps.is_none_or(|s| s == *wins) => Some((*wins, *losses)),
             _ => None,
         });
 
@@ -862,7 +871,7 @@ mod tests {
     }
 
     fn pr(wins: u8, losses: u8, stamps: Option<u8>) -> Seen {
-        Seen::Progress { wins, losses, stamps }
+        Seen::Progress { wins, losses, stamps, mode: None }
     }
 
     #[test]
@@ -1145,6 +1154,27 @@ mod tests {
     }
 
     #[test]
+    fn progress_tag_gives_the_mode_when_the_header_is_skipped() {
+        let mut r = Run::new();
+        r.intro(Rule::Asari).feed(Seen::Outcome(Outcome::Lose), 6).wait(10);
+        let p = Seen::Progress { wins: 1, losses: 2, stamps: Some(1), mode: Some(Mode::BankaraChallenge) };
+        r.feed(p, 6).wait(60).intro(Rule::Asari);
+        let res = r.events.iter().find(|e| e["type"] == "result").expect("負けが流れる");
+        assert_eq!((res["mode"].as_str(), res["outcome"].as_str()), (Some("bankara_challenge"), Some("lose")));
+        let pr = r.events.iter().find(|e| e["type"] == "set_progress").expect("進行も流れる");
+        assert_eq!((pr["wins"].as_u64(), pr["losses"].as_u64()), (Some(1), Some(2)));
+    }
+
+    #[test]
+    fn bankara_open_is_decided_by_the_matching() {
+        let mut r = Run::new();
+        r.feed(Seen::Matching(Mode::BankaraOpen), 10).intro(Rule::Area).feed(win(), 6);
+        r.feed(header(Mode::BankaraChallenge, Rule::Area, Note::None), 5).wait(5);
+        let res = r.events.iter().find(|e| e["type"] == "result").unwrap();
+        assert_eq!(res["mode"], "bankara_open");
+    }
+
+    #[test]
     fn matching_with_the_menu_gives_both_the_mode_and_the_value() {
         let mut r = Run::new();
         let mm = Seen::MatchingValue { mode: Mode::X, what: Observed::X { rule: None, value: 2100.0 }, wins: Some(1), losses: Some(0) };
@@ -1219,5 +1249,45 @@ mod tests {
         assert_eq!(r.m.stage(), Stage::NoSignal);
         r.feed(Seen::Unknown, 1);
         assert_eq!(r.m.stage(), Stage::InBattle);
+    }
+}
+
+/// 録画（samples/record/日時/HHMMSS_mmm.jpg）を、本番と同じ読み取りと状態の移り変わりに通して、流れる出来事を出す。
+/// 照合には手元の見本を使う（`SRW_REC=samples/record/20261006-000342 cargo test --release -- --ignored replay_record --nocapture`）
+#[cfg(test)]
+mod replay {
+    use super::*;
+    use crate::recognize::Recognizer;
+    use crate::templates::Templates;
+
+    #[test]
+    #[ignore]
+    fn replay_record() {
+        let Ok(dir) = std::env::var("SRW_REC") else { return };
+        let dir = std::path::PathBuf::from(dir);
+        let day = dir.file_name().unwrap().to_string_lossy()[..8].to_string();
+        let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|e| e == "jpg")).collect();
+        files.sort();
+        let rec = Recognizer::new(Templates::load(&Templates::default_dir()).unwrap());
+        let mut m = Machine::new(Config::default());
+        let mut last = String::new();
+        for p in files {
+            let stem = p.file_stem().unwrap().to_string_lossy().to_string();
+            let local = chrono::NaiveDateTime::parse_from_str(&format!("{day}{}", &stem[..10]), "%Y%m%d%H%M%S_%3f").unwrap();
+            let at = local.and_local_timezone(chrono::Local).unwrap().with_timezone(&Utc);
+            let img = image::open(&p).unwrap().to_rgb8();
+            let seen = rec.recognize(&img).seen;
+            let s = format!("{seen:?}");
+            let kind = s.split(['(', ' ']).next().unwrap().to_string();
+            let verbose = std::env::var("SRW_FROM").is_ok_and(|f| stem.as_str() >= f.as_str())
+                && std::env::var("SRW_TO").is_ok_and(|t| stem.as_str() <= t.as_str());
+            if verbose || (kind != last && kind != "Unknown") {
+                println!("{stem} {}", s.chars().take(90).collect::<String>());
+            }
+            last = kind;
+            for ev in m.feed(at, seen) {
+                println!("  → {ev}");
+            }
+        }
     }
 }

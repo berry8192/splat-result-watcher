@@ -329,8 +329,13 @@ impl Recognizer {
         };
         let mode_label = |m: Mode| if m == Mode::X { "x" } else { "bankara_challenge" };
 
-        // 試合は必ずルール紹介から始まる
+        // 試合は必ずルール紹介から始まる。見本は 2 行目の語なので、ナワバリバトルの「バトル」がガチホコに見える。
+        // 1 行目が「ナワバリ」なら紹介とは見ない（ナワバリは数えない）
         if let Some(r) = self.decide(work, p("rule_intro"), RULE_INTRO_MIN, notes).and_then(rule) {
+            if r == Rule::Hoko && shapes::turf_intro(work) {
+                notes.text.push("ナワバリバトルの紹介（数えない）".into());
+                return Seen::Unknown;
+            }
             return Seen::RuleIntro(r);
         }
         if let Some(r) = shapes::rule_intro(work) {
@@ -363,8 +368,14 @@ impl Recognizer {
         }
 
         let matching = match self.decide(work, p("matching"), MATCHING_MIN, notes) {
-            // 「ウデマエ」ではチャレンジとオープンを見分けられない（オープンは当面対応しない）
-            Some(l) => Some(if l == "x" { Mode::X } else { Mode::BankaraChallenge }),
+            // 見出しの「ウデマエ」ではチャレンジとオープンを見分けられないので、○の有無で
+            Some(l) => Some(if l == "x" {
+                Mode::X
+            } else if shapes::bankara_open(work) {
+                Mode::BankaraOpen
+            } else {
+                Mode::BankaraChallenge
+            }),
             None => shapes::matching_mode(work)
                 .inspect(|m| notes.shape(work, p("matching"), if *m == Mode::X { "x" } else { "bankara" })),
         };
@@ -424,7 +435,8 @@ impl Recognizer {
         if self.decide(work, p("progress_label"), PROGRESS_LABEL_MIN, notes).is_some() {
             if let Some((wins, losses)) = count_progress(work, &PROGRESS_STRIP) {
                 notes.text.push(format!("進行: {wins}-{losses}"));
-                return Seen::Progress { wins, losses, stamps: Some(wins) };
+                let mode = shapes::progress_mode(work);
+                return Seen::Progress { wins, losses, stamps: Some(wins), mode };
             }
         }
 
@@ -637,9 +649,13 @@ mod with_samples {
         let menu_ud = Seen::Observed { what: Observed::Udemae { value: 1051 }, wins: Some(0), losses: Some(0) };
         assert_eq!(see("041221"), menu_ud, "{}", why("041221"));
         // 進行の画面（勝ち負けは色で数える。見本にしたのは 032850 の「WIN LOSE」の見出しだけ）
-        let pr = |w, l| Seen::Progress { wins: w, losses: l, stamps: Some(w) };
+        // 進行の見本のモード（032900 は X、ほかはバンカラのチャレンジ・昇格戦）
+        let pr = |key: &str, w, l| {
+            let mode = Some(if key == "032900" { Mode::X } else { Mode::BankaraChallenge });
+            Seen::Progress { wins: w, losses: l, stamps: Some(w), mode }
+        };
         for (key, w, l) in [("032900", 1, 0), ("040351", 0, 1), ("040627", 3, 1), ("040643", 3, 2), ("041437", 2, 1), ("041454", 2, 2)] {
-            assert_eq!(see(key), pr(w, l), "{key}: {}", why(key));
+            assert_eq!(see(key), pr(key, w, l), "{key}: {}", why(key));
         }
         assert_eq!(mm(see("040151")), Seen::Matching(Mode::BankaraChallenge));
         // メニュー・順位・試合中（無効試合の札・バトル中・Finish!）・X に挑戦できる・進行

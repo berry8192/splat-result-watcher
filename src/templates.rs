@@ -574,7 +574,9 @@ fn trim_left_cut(mut p: Patch) -> Patch {
 /// 先頭にランクの字（S・A+ など）がある場所。先頭のかたまりを捨て、次が数字の高さでなければ（「S+」の「+」など）読まない
 const DROP_RANK: [&str; 1] = ["matching_udemae_value"];
 
-/// 先頭のかたまり（ランクの字）を消す。次のかたまりが一番高い字の 8 割に満たなければ全部消す（読み違えるより読まない）
+/// 先頭のかたまり（ランクの字）を消す。続く低いかたまり（「S+1」の「+」と小さな「1」）も消す。
+/// ただし平たいもの（高さが一番高い字の 3 割未満）はポイントのマイナスなので残す。
+/// 最初の数字の高さのかたまりまでに、どちらでもないものがあれば全部消す（読み違えるより読まない）
 fn drop_rank(mut p: Patch) -> Patch {
     let col = |p: &Patch, x: u32| (0..p.h).any(|y| p.px[(y * p.w + x) as usize] != 0);
     let mut runs = Vec::new();
@@ -591,10 +593,14 @@ fn drop_rank(mut p: Patch) -> Patch {
         }
     }
     let tallest = runs.iter().map(|r| r.2).max().unwrap_or(0);
-    let clear_to = match runs.get(1) {
-        Some(r) if r.2 * 10 >= tallest * 8 => r.0,
-        _ => p.w,
-    };
+    let mut clear_to = p.w;
+    for r in runs.iter().skip(1) {
+        if r.2 * 10 >= tallest * 8 || r.2 * 10 < tallest * 3 {
+            // 数字の高さか、平たいマイナス: ここから読む
+            clear_to = r.0;
+            break;
+        }
+    }
     for y in 0..p.h {
         for x in 0..clear_to {
             p.px[(y * p.w + x) as usize] = 0;

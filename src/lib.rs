@@ -21,10 +21,11 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-/// 撮る間隔。1 回の撮影が重ければ（平均 20ms 超）1 秒に落とす
+/// 撮る間隔。1 回の撮影が重ければ（平均 60ms 超）1 秒に落とす。
+/// （20ms にしていたら、本番の 21ms で 1 秒ごとに落ち、すぐ次へ進めた進行の画面を 2 枚しか撮れなかった。2026-10-06）
 pub const INTERVAL: Duration = Duration::from_millis(500);
 pub const SLOW_INTERVAL: Duration = Duration::from_secs(1);
-pub const SLOW_CAPTURE_MS: f64 = 20.0;
+pub const SLOW_CAPTURE_MS: f64 = 60.0;
 /// これより黒い絵は「映像が来ていない」とみなす
 pub const NO_SIGNAL_DARK: f64 = 0.98;
 

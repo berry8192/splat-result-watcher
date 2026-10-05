@@ -72,19 +72,42 @@ const PANEL_EDGE: Roi = Roi::new(415, 300, 40, 300);
 const TOP_LEFT: Roi = Roi::new(36, 45, 220, 75);
 /// 結果の帯: ルールとステージの黒い帯、その上のモード名の行
 const HEADER_BAR: Roi = Roi::new(680, 66, 240, 30);
-const HEADER_MODE: Roi = Roi::new(664, 38, 220, 22);
+/// 結果の帯のモード名の行（字と、その後ろの黒い箱の長さを測る）
+const MODE_ROW: Roi = Roi::new(650, 40, 300, 18);
 /// 結果の表（個人リザルト・スコアボード）の右の黒いパネル
 const SCOREBOARD: Roi = Roi::new(1150, 250, 200, 300);
 /// マッチングの画面のルール名の行
 const MATCHING_RULE: Roi = Roi::new(180, 310, 300, 50);
 /// マッチングのメニューの黒いパネル（ルール名の上下の、文字の少ない所）
 const MATCHING_PANEL: Roi = Roi::new(120, 280, 500, 240);
+/// バンカラのマッチングの値の右の、チャレンジの○
+const MATCHING_CIRCLES: Roi = Roi::new(360, 415, 260, 50);
+/// メニューの値の後ろの黒い箱（本物のメニューは 0.54〜0.91、試合中にインクの色を見出しと見たときは 0.16 以下）
+const MENU_X_BOX: Roi = Roi::new(1390, 156, 120, 42);
+const MENU_UDEMAE_BOX: Roi = Roi::new(1370, 182, 150, 42);
 /// メニューの見出し（「Xパワー :」「ウデマエ」）
 const MENU_X_LABEL: Roi = Roi::new(1288, 156, 108, 42);
 const MENU_UDEMAE_LABEL: Roi = Roi::new(1320, 148, 90, 32);
 /// ルール紹介の黒いしぶきと、2 行目の語
 const INTRO_SPLAT: Roi = Roi::new(600, 300, 350, 230);
 const INTRO_WORD: Roi = Roi::new(640, 405, 260, 95);
+
+/// 進行の画面のパネルの左上の、バンカラの黄色い札（「チャレンジ」「昇格戦」。手元で 0.42〜0.52、X は 0.0）
+const PROGRESS_TAG: Roi = Roi::new(380, 140, 190, 55);
+
+/// 札の黄色（縮めると縁がぼけるので、少しゆるめ）
+fn tag_yellow([r, g, b]: [u8; 3]) -> bool {
+    r >= 170 && g >= 170 && b <= 120
+}
+
+/// 進行の画面のモード: 黄色い札があればバンカラ、まったく無ければ X、どちらとも言えなければ None
+pub fn progress_mode(img: &RgbImage) -> Option<Mode> {
+    match ratio(img, PROGRESS_TAG, tag_yellow) {
+        v if v >= 0.15 => Some(Mode::BankaraChallenge),
+        v if v < 0.02 => Some(Mode::X),
+        _ => None,
+    }
+}
 
 pub fn udemae_gauge(img: &RgbImage) -> bool {
     ratio(img, GAUGE, mid_gray) >= 0.6
@@ -158,7 +181,8 @@ pub fn outcome(img: &RgbImage) -> Option<Outcome> {
     // ごく小さいもの（圧縮のちらつき・枠の端）は数えない
     let b: Vec<&Blob> = all.iter().filter(|b| b.px >= 12).collect();
     let tall = |b: &Blob| b.h as f64 >= 0.45 * rh;
-    let good = |b: &Blob| (0.45..=0.75).contains(&(b.h as f64 / rh)) && (b.top as f64) <= 0.3 * rh;
+    // 字は枠の中に収まっている（本物は上端から 0.1〜0.22。試合中の HUD は枠の上端にくっついて当たった）
+    let good = |b: &Blob| (0.45..=0.75).contains(&(b.h as f64 / rh)) && (0.06 * rh..=0.3 * rh).contains(&(b.top as f64));
     let dot = |b: &Blob| (b.h as f64) <= 0.2 * rh && (b.w as f64) <= 0.2 * rh && b.top as f64 >= 0.55 * rh;
     if b.len() < 4 || !b[..4].iter().all(|x| tall(x)) {
         return None;
@@ -189,19 +213,42 @@ pub fn header_mode(img: &RgbImage) -> Option<Mode> {
     if ratio(img, HEADER_BAR, neutral_dark) < 0.3 || ratio(img, SCOREBOARD, neutral_dark) < 0.4 {
         return None;
     }
-    let (x0, y0, w, h) = HEADER_MODE.scaled(img.width());
-    // 「（チャレンジ）」の小さな字は縮めると細くなるので、白が 1px でもある列を数える
-    let cols: Vec<u32> = (x0..x0 + w).filter(|&x| (y0..y0 + h).any(|y| white(img.get_pixel(x, y).0))).collect();
-    let (first, last) = (*cols.first()?, *cols.last()?);
+    // モード名の行。字は 170 以上を白とする（「（チャレンジ）」の小さな字は縮めると細く暗くなる）
+    let (x0, y0, w, h) = MODE_ROW.scaled(img.width());
     let base = |v: u32| v * 1536 / img.width();
-    // 書き出しは帯の左の決まった所（手元の見本で 676〜678）。右端まで白いものは帯ではない
-    if !(668..=690).contains(&base(first)) || last + 1 >= x0 + w {
+    let px = |x: u32, y: u32| img.get_pixel(x, y).0;
+    let text = |x: u32| (y0..y0 + h).any(|y| px(x, y).iter().all(|&c| c >= 170));
+    let dark = |x: u32| (y0..y0 + h).filter(|&y| neutral_dark(px(x, y))).count() * 2 > h as usize;
+    let first = (x0..x0 + w).find(|&x| text(x))?;
+    // 書き出しは帯の左の決まった所（手元の見本で 676〜678）
+    if !(668..=690).contains(&base(first)) {
         return None;
     }
-    match base(last - first + 1) {
-        25..=60 => Some(Mode::X),
-        // 「バンカラマッチ（チャレンジ）」「（オープン）」（手元の見本で 76〜176。縮めた大きさで測るので短めに出る）
-        70..=200 => Some(Mode::BankaraChallenge),
+    // 字の後ろの黒い箱の右端（暗い列か字の列が続く所）。箱は X 52〜54、レギュラー 102、バンカラ 148〜150
+    // （オープンとチャレンジは見分けられない）。小さな字は縮めると中間の灰色になって 4 列ほど切れるので、
+    // 5 列までの切れ目は続きとみなす（箱の外の写真に入ると、もっと長く切れる）
+    let gap = (5 * img.width() / 1024).max(2);
+    let mut x = first;
+    let mut last_in = first;
+    while x < x0 + w && x - last_in <= gap {
+        if dark(x) || text(x) {
+            last_in = x;
+        }
+        x += 1;
+    }
+    let x = last_in + 1;
+    let boxed = base(x - first);
+    let width = if boxed < 250 {
+        boxed
+    } else {
+        // 後ろも暗くて箱の端が見えない。字の幅で（X 39、バンカラ 135）
+        let last = (first..x0 + w).filter(|&x| text(x)).last()?;
+        base(last - first + 1) + 15
+    };
+    match width {
+        30..=80 => Some(Mode::X),
+        85..=125 => Some(Mode::Other),
+        130..=200 => Some(Mode::BankaraChallenge),
         _ => None,
     }
 }
@@ -216,16 +263,113 @@ pub fn matching_mode(img: &RgbImage) -> Option<Mode> {
     if ratio(img, MATCHING_PANEL, neutral_dark) < 0.6 {
         return None;
     }
-    mode_color(img, MATCHING_RULE, 0.08)
+    match mode_color(img, MATCHING_RULE, 0.08)? {
+        Mode::BankaraChallenge if bankara_open(img) => Some(Mode::BankaraOpen),
+        m => Some(m),
+    }
+}
+
+/// バンカラのマッチングで、オープンか（チャレンジは値の右に点線の○が並ぶ（0.014〜0.026）。オープンには無い（0.000））
+pub fn bankara_open(img: &RgbImage) -> bool {
+    ratio(img, MATCHING_CIRCLES, light) < 0.006
+}
+
+/// ルール紹介の 1 行目が「ナワバリ」か（ナワバリバトル。2 行目は「バトル」でガチホコと同じ）。
+/// 紹介の字は画面の真ん中にそろえて書かれる。ランクのルールの 1 行目は必ず「ガチ」で始まるので、濁点は 1 文字目「ガ」に付き、
+/// 真ん中より左（手元で −5〜−48px）。「ナワバリ」は 3 文字目「バ」に付き、右（+34px）。フォントに頼らず、字の作りで見分ける。
+/// 濁点は「同じくらいの大きさの小さな点が 2 つ並んだもの」とする（背景の白いものは対にならない）
+pub fn turf_intro(img: &RgbImage) -> bool {
+    let (x0, y0, w, h) = INTRO_LINE1.scaled(img.width());
+    let (w, h) = (w as usize, h as usize);
+    let px: Vec<bool> = (y0..y0 + h as u32)
+        .flat_map(|y| (x0..x0 + w as u32).map(move |x| (x, y)))
+        .map(|(x, y)| x < img.width() && y < img.height() && white(img.get_pixel(x, y).0))
+        .collect();
+    // 照合する大きさ（1024 幅）での px にそろえる
+    let k = 1024.0 / img.width() as f64;
+    let marks: Vec<Comp> = components(&px, w, h)
+        .into_iter()
+        .filter(|c| {
+            let (cw, ch, n) = ((c.x1 - c.x0 + 1) as f64 * k, (c.y1 - c.y0 + 1) as f64 * k, c.n as f64 * k * k);
+            (6.0..=15.0).contains(&ch) && (40.0..=250.0).contains(&n) && cw <= 16.0
+        })
+        .collect();
+    let center = w as f64 / 2.0;
+    marks.iter().enumerate().any(|(i, a)| {
+        marks[i + 1..].iter().any(|b| {
+            let (ca, cb) = ((a.x0 + a.x1) as f64 / 2.0, (b.x0 + b.x1) as f64 / 2.0);
+            let pair = (a.y0 as f64 - b.y0 as f64).abs() * k <= 4.0
+                && (ca - cb).abs() * k <= 16.0
+                && (0.6..=1.6).contains(&(a.n as f64 / b.n as f64));
+            pair && ((ca + cb) / 2.0 - center) * k > 15.0
+        })
+    })
+}
+
+/// つながった白いかたまり
+struct Comp {
+    n: usize,
+    x0: usize,
+    x1: usize,
+    y0: usize,
+    y1: usize,
+}
+
+fn components(px: &[bool], w: usize, h: usize) -> Vec<Comp> {
+    let mut seen = vec![false; px.len()];
+    let mut out = Vec::new();
+    for start in 0..px.len() {
+        if !px[start] || seen[start] {
+            continue;
+        }
+        let mut c = Comp { n: 0, x0: usize::MAX, x1: 0, y0: usize::MAX, y1: 0 };
+        let mut stack = vec![start];
+        seen[start] = true;
+        while let Some(i) = stack.pop() {
+            let (x, y) = (i % w, i / w);
+            c.n += 1;
+            c.x0 = c.x0.min(x);
+            c.x1 = c.x1.max(x);
+            c.y0 = c.y0.min(y);
+            c.y1 = c.y1.max(y);
+            let mut push = |j: usize| {
+                if px[j] && !seen[j] {
+                    seen[j] = true;
+                    stack.push(j);
+                }
+            };
+            if x > 0 {
+                push(i - 1);
+            }
+            if x + 1 < w {
+                push(i + 1);
+            }
+            if y > 0 {
+                push(i - w);
+            }
+            if y + 1 < h {
+                push(i + w);
+            }
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// 白っぽい灰色（マッチングの点線の○）
+fn light([r, g, b]: [u8; 3]) -> bool {
+    r.min(g).min(b) >= 150 && r.max(g).max(b) - r.min(g).min(b) < 40
 }
 
 /// メニューの見出しの色（数字の形式と合わせて使う）
 pub fn menu_x_label(img: &RgbImage) -> bool {
-    ratio(img, MENU_X_LABEL, teal) >= 0.05
+    ratio(img, MENU_X_LABEL, teal) >= 0.05 && ratio(img, MENU_X_BOX, neutral_dark) >= 0.4
 }
 
 pub fn menu_udemae_label(img: &RgbImage) -> bool {
-    ratio(img, MENU_UDEMAE_LABEL, orange) >= 0.15 && ratio(img, MENU_UDEMAE_LABEL, teal) < 0.02
+    ratio(img, MENU_UDEMAE_LABEL, orange) >= 0.15
+        && ratio(img, MENU_UDEMAE_LABEL, teal) < 0.02
+        && ratio(img, MENU_UDEMAE_BOX, neutral_dark) >= 0.4
 }
 
 fn mode_color(img: &RgbImage, roi: Roi, min: f64) -> Option<Mode> {
@@ -242,6 +386,8 @@ fn mode_color(img: &RgbImage, roi: Roi, min: f64) -> Option<Mode> {
 // ---- ルール紹介の語 ----
 
 const WORDS: [(Rule, &str); 4] = [(Rule::Area, "エリア"), (Rule::Yagura, "ヤグラ"), (Rule::Hoko, "バトル"), (Rule::Asari, "アサリ")];
+/// 1 行目（「ガチ」「ガチホコ」「ナワバリ」）。ナワバリバトルも 2 行目は「バトル」なので、1 行目で見分ける
+const INTRO_LINE1: Roi = Roi::new(600, 312, 340, 88);
 /// 比べる大きさ（語を外接の箱いっぱいに伸ばす）
 const WW: usize = 96;
 const WH: usize = 32;
@@ -295,21 +441,36 @@ fn iou(a: &[bool], b: &[bool]) -> f64 {
 }
 
 /// Windows のゴシック体で書いた語（フォントごと）。フォントが 1 つも無ければ空
+fn rendered(words: &[&str]) -> Vec<Vec<Vec<bool>>> {
+    let mut out = Vec::new();
+    for name in ["meiryob.ttc", "YuGothB.ttc", "BIZ-UDGothicB.ttc"] {
+        let Ok(bytes) = std::fs::read(format!(r"C:\Windows\Fonts\{name}")) else { continue };
+        let Ok(font) = ab_glyph::FontVec::try_from_vec_and_index(bytes, 0) else { continue };
+        let font = FontArc::new(font);
+        let set: Option<Vec<Vec<bool>>> = words.iter().map(|w| render(&font, w)).collect();
+        if let Some(set) = set {
+            out.push(set);
+        }
+    }
+    out
+}
+
 fn words() -> &'static Vec<Vec<Vec<bool>>> {
     static W: OnceLock<Vec<Vec<Vec<bool>>>> = OnceLock::new();
-    W.get_or_init(|| {
-        let mut out = Vec::new();
-        for name in ["meiryob.ttc", "YuGothB.ttc", "BIZ-UDGothicB.ttc"] {
-            let Ok(bytes) = std::fs::read(format!(r"C:\Windows\Fonts\{name}")) else { continue };
-            let Ok(font) = ab_glyph::FontVec::try_from_vec_and_index(bytes, 0) else { continue };
-            let font = FontArc::new(font);
-            let set: Option<Vec<Vec<bool>>> = WORDS.iter().map(|(_, w)| render(&font, w)).collect();
-            if let Some(set) = set {
-                out.push(set);
-            }
-        }
-        out
-    })
+    W.get_or_init(|| rendered(&WORDS.map(|(_, w)| w)))
+}
+
+
+/// 白い字を書いた語と比べ、語ごとの似ている度合い（フォントの平均）。白が無ければ None
+fn compare(img: &RgbImage, roi: Roi, sets: &[Vec<Vec<bool>>]) -> Option<Vec<f64>> {
+    let (x0, y0, w, h) = roi.scaled(img.width());
+    let px: Vec<bool> = (y0..y0 + h)
+        .flat_map(|y| (x0..x0 + w).map(move |x| (x, y)))
+        .map(|(x, y)| white(img.get_pixel(x, y).0))
+        .collect();
+    let g = fit(&px, w as usize, h as usize)?;
+    let n = sets.first()?.len();
+    Some((0..n).map(|i| sets.iter().map(|s| iou(&g, &s[i])).sum::<f64>() / sets.len() as f64).collect())
 }
 
 fn render(font: &FontArc, text: &str) -> Option<Vec<bool>> {
@@ -342,21 +503,12 @@ pub fn rule_intro(img: &RgbImage) -> Option<Rule> {
     if !(0.18..=0.45).contains(&wr) || ratio(img, INTRO_SPLAT, neutral_dark) < 0.5 {
         return None;
     }
-    let (x0, y0, w, h) = INTRO_WORD.scaled(img.width());
-    let px: Vec<bool> = (y0..y0 + h)
-        .flat_map(|y| (x0..x0 + w).map(move |x| (x, y)))
-        .map(|(x, y)| white(img.get_pixel(x, y).0))
-        .collect();
-    let g = fit(&px, w as usize, h as usize)?;
-    let sets = words();
-    if sets.is_empty() {
+    // 1 行目が「ナワバリ」ならナワバリバトル（試合として数えないので、紹介とも見ない）
+    if turf_intro(img) {
         return None;
     }
-    let mut sc: Vec<(Rule, f64)> = WORDS
-        .iter()
-        .enumerate()
-        .map(|(i, (r, _))| (*r, sets.iter().map(|s| iou(&g, &s[i])).sum::<f64>() / sets.len() as f64))
-        .collect();
+    let s2 = compare(img, INTRO_WORD, words())?;
+    let mut sc: Vec<(Rule, f64)> = WORDS.iter().zip(s2).map(|((r, _), v)| (*r, v)).collect();
     sc.sort_by(|a, b| b.1.total_cmp(&a.1));
     (sc[0].1 >= WORD_MIN && sc[0].1 - sc[1].1 >= WORD_MARGIN).then_some(sc[0].0)
 }
@@ -477,7 +629,10 @@ mod measure {
                 let g = rec.read_glyphs(&img, crate::templates::place(id).unwrap());
                 println!("  {id} {}/{} {}", g.text, g.guess, g.note());
             }
-            println!("  勝敗 {:?} メニューのウデマエ {}/{} 読み {:?}", outcome(&img), mu.text, mu.guess, rec.recognize(&img).seen);
+            let r = rec.recognize(&img);
+            println!("  勝敗 {:?} メニューのウデマエ {}/{} 読み {:?}", outcome(&img), mu.text, mu.guess, r.seen);
+            println!("  札 {:.3} {:?}", ratio(&img, PROGRESS_TAG, tag_yellow), progress_mode(&img));
+            println!("  ナワバリ {} 途中 {}", turf_intro(&img), r.notes.iter().take(3).cloned().collect::<Vec<_>>().join(" / "));
         }
     }
 }
