@@ -28,6 +28,7 @@ function pick(events) {
   let xp = null;
   let udemae = null;
   let set = null;
+  let ended = null; // セットを終わらせたパワーの変動（match_id）と、その試合の勝敗
   for (const e of events) {
     if (mode == null && (e.type === "result" || e.type === "battle_started") && e.mode) mode = e.mode;
     if (mode == null && e.type === "observed") mode = e.kind === "x" ? "x" : "bankara";
@@ -44,55 +45,58 @@ function pick(events) {
       set = { wins: e.wins, losses: e.losses };
     }
     // パワーの変動が出たらセットは終わっている（3 勝目・3 敗目の後は進行の画面が出ない）。次のセットは 0 勝 0 敗から
-    if (set == null && e.type === "power" && !e.calibrating && e.before != null) set = { wins: 0, losses: 0 };
+    if (set == null && e.type === "power" && !e.calibrating && e.before != null) {
+      set = { wins: 0, losses: 0 };
+      ended = { match_id: e.match_id };
+    }
+    if (ended && ended.outcome == null && e.type === "result" && e.match_id === ended.match_id) ended.outcome = e.outcome;
+    // 終わったセットの、最後の試合の前の勝敗（これに最後の勝ち負けを足したものを、変動の間だけ見せる）
+    if (ended && ended.prev == null && e.type === "set_progress" && e.match_id !== ended.match_id) {
+      ended.prev = { wins: e.wins, losses: e.losses };
+    }
+  }
+  if (set && ended?.outcome && ended.prev) {
+    const win = ended.outcome === "win";
+    set.final = { wins: ended.prev.wins + (win ? 1 : 0), losses: ended.prev.losses + (win ? 0 : 1) };
   }
   return { mode, rule, xp, udemae, set };
 }
 
-/** 値が変わったら、前の値から新しい値へ 1.6 秒かけて数え上げる（ドラムロール）。終わったら `pulse` が進む */
+/** 値が変わったら、前の値から新しい値へ数え上げる（ドラムロール）。上がるときは 4 秒かけ、下がるときは 1.6 秒。
+ * 動いている間は `rolling` */
 function useRolling(value) {
   const [shown, setShown] = useState(value);
-  const [pulse, setPulse] = useState(0);
+  const [rolling, setRolling] = useState(false);
   const prev = useRef(value);
   useEffect(() => {
     const from = prev.current;
     prev.current = value;
     if (value == null || from == null || from === value) {
       setShown(value);
+      setRolling(false);
       return;
     }
     const t0 = performance.now();
-    const dur = 1600;
+    const dur = value > from ? 4000 : 1600;
     let raf;
+    setRolling(true);
     const step = (t) => {
       const k = Math.min(1, (t - t0) / dur);
       const e = 1 - Math.pow(1 - k, 3);
       setShown(from + (value - from) * e);
       if (k < 1) raf = requestAnimationFrame(step);
-      else setPulse((n) => n + 1);
+      else setRolling(false);
     };
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
   }, [value]);
-  return { shown, pulse };
+  return { shown, rolling };
 }
 
-/** 値が変わった回数（最初の表示は数えない）。CSS の動きを再生し直す key に使う */
-function useChanges(value) {
-  const [n, setN] = useState(0);
-  const prev = useRef(value);
-  useEffect(() => {
-    if (prev.current != null && value != null && prev.current !== value) setN((c) => c + 1);
-    prev.current = value;
-  }, [value]);
-  return n;
-}
-
-function Power({ power, isX, isBankara, size }) {
-  const { shown, pulse } = useRolling(power);
+function Power({ shown, isX, isBankara, size }) {
   if (shown == null) return null;
   return (
-    <span key={pulse} className={pulse > 0 ? "disp-power pop" : "disp-power"} style={{ fontSize: size }}>
+    <span className="disp-power" style={{ fontSize: size }}>
       {isX ? shown.toFixed(1) : Math.round(shown)}
       {isBankara && <small style={{ fontSize: Math.round(size * 0.42) }}>p</small>}
     </span>
@@ -169,11 +173,12 @@ export default function DisplayApp() {
   const isX = mode === "x";
   const isBankara = mode != null && mode.startsWith("bankara");
   const power = isX ? xp : isBankara ? udemae : null;
-  const showSet = set && mode !== "bankara_open" && mode !== "other";
-  const setKey = showSet ? `${set.wins}-${set.losses}` : null;
-  const setChanges = useChanges(setKey);
+  const { shown, rolling } = useRolling(power);
+  // パワーが動いている間は、終わったセットの勝敗（3 勝目・3 敗目まで入れたもの）を見せ、止まったら 0 勝 0 敗に
+  const setShown = set?.final && rolling ? set.final : set;
+  const showSet = setShown && mode !== "bankara_open" && mode !== "other";
   const note = !s ? "" : !s.source ? "N Air または OBS が見つかりません" : s.events.length === 0 ? "まだ試合を認識していません" : "";
-  const powerEl = power != null && <Power power={power} isX={isX} isBankara={isBankara} size={d.font_power} />;
+  const powerEl = shown != null && <Power shown={shown} isX={isX} isBankara={isBankara} size={d.font_power} />;
 
   return (
     <div
@@ -190,8 +195,8 @@ export default function DisplayApp() {
           </span>
           {layout === "tate" && powerEl}
           {showSet && (
-            <span key={setChanges} className={setChanges > 0 ? "disp-set pop" : "disp-set"} style={{ fontSize: d.font_set }}>
-              {set.wins}勝 {set.losses}敗
+            <span className="disp-set" style={{ fontSize: d.font_set }}>
+              {setShown.wins}勝 {setShown.losses}敗
             </span>
           )}
           {note && <span className="disp-note">{note}</span>}
