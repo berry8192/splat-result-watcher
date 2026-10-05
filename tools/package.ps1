@@ -23,7 +23,8 @@ Write-Host "== $name"
 Run npm @("--prefix", "ui", "ci")
 Run npm @("--prefix", "ui", "run", "build")
 
-# 2. exe
+# 2. exe。エラーの表示に使うソースのパスから、組んだ PC のユーザー名を外す
+$env:RUSTFLAGS = "--remap-path-prefix=$env:USERPROFILE=~"
 Run cargo @("build", "--release", "--locked", "--target-dir", $TargetDir)
 $bin = Join-Path $TargetDir "release"
 
