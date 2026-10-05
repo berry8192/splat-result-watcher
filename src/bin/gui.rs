@@ -79,9 +79,10 @@ fn frame(app: State<App>, max_w: u32) -> Option<String> {
     Some(jpeg_url(&f, max_w))
 }
 
-/// 設定・手動作業の窓を開く（開いていれば前に出す）
+/// 設定・手動作業の窓を開く（開いていれば前に出す）。
+/// Windows では同期の命令の中で窓を作ると WebView2 が立ち上がれず、中身が真っ白のままになるので async にする
 #[tauri::command]
-fn open_settings(app: AppHandle) -> Res<()> {
+async fn open_settings(app: AppHandle) -> Res<()> {
     if let Some(w) = app.get_webview_window("settings") {
         let _ = w.unminimize();
         w.show().map_err(err)?;
@@ -369,6 +370,12 @@ fn list_templates(app: State<App>) -> Vec<PoolView> {
     })
 }
 
+/// 見本のそろい具合（どの画面で何がそろうか、何が残っているか）
+#[tauri::command]
+fn materials(app: State<App>) -> Vec<splat_result_watcher::materials::ScreenStatus> {
+    app.engine.lock().unwrap().read_recognizer(|r| splat_result_watcher::materials::status(r.templates()))
+}
+
 #[tauri::command]
 fn delete_template(app: State<App>, pool: String, id: String) -> Res<()> {
     let pool = pool_by_name(&pool)?;
@@ -460,6 +467,7 @@ fn main() {
             register_glyphs,
             list_templates,
             delete_template,
+            materials,
         ])
         .run(tauri::generate_context!())
         .expect("GUI を起動できない");

@@ -432,3 +432,77 @@ table th {
   font-style: normal;
   color: #c87800;
 }
+
+.materials .summary {
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.screen-card {
+  border: 1px solid #555;
+  border-left-width: 5px;
+  border-radius: 4px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+}
+.screen-card.ready {
+  border-left-color: #3a9a5a;
+}
+.screen-card.waiting {
+  border-left-color: #4a7ec8;
+}
+.screen-card.needs-manual {
+  border-left-color: #d08a00;
+}
+.screen-head {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+.screen-head .badge {
+  font-size: 12px;
+  opacity: 0.8;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+  align-items: center;
+}
+.chips .how {
+  min-width: 5em;
+}
+.chip {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 13px;
+  border: 1px solid transparent;
+}
+.chip em {
+  margin-left: 3px;
+  font-size: 10px;
+  font-style: normal;
+}
+.chip.manual {
+  background: #2f7a48;
+  color: #fff;
+}
+.chip.auto {
+  background: #2f5f9a;
+  color: #fff;
+}
+.chip.missing {
+  border-color: #777;
+  color: #999;
+  border-style: dashed;
+}
+.chip.missing-manual {
+  border-color: #d08a00;
+  color: #d08a00;
+}
+.legend .chip {
+  margin-right: 4px;
+}

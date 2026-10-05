@@ -5,6 +5,7 @@ pub mod hitlog;
 pub mod layout;
 pub mod learn;
 pub mod matching;
+pub mod materials;
 pub mod nair;
 pub mod recognize;
 pub mod recorder;
