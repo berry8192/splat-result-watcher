@@ -102,9 +102,13 @@ export default function SettingsPage() {
           <input type="number" min="8" max="200" value={form.display.font_set} onChange={(e) => setD("font_set", Number(e.target.value))} />
         </label>
         <label>
-          文字色
-          <input type="color" value={form.display.text_color} onChange={(e) => setD("text_color", e.target.value)} />
-          　モードとルールの色
+          文字色: パワー（X マッチ）
+          <input type="color" value={form.display.x_color} onChange={(e) => setD("x_color", e.target.value)} />
+          　パワー（バンカラ）
+          <input type="color" value={form.display.bankara_color} onChange={(e) => setD("bankara_color", e.target.value)} />
+          　勝敗
+          <input type="color" value={form.display.set_color} onChange={(e) => setD("set_color", e.target.value)} />
+          　モードとルール
           <input type="color" value={form.display.head_color} onChange={(e) => setD("head_color", e.target.value)} />
         </label>
         <label>

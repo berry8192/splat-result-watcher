@@ -123,7 +123,7 @@ export default function DisplayApp() {
     };
   }, []);
 
-  const d = settings?.display ?? { layout: "yoko", bg: "#16161d", font_head: 22, font_power: 72, font_set: 30, outline_px: 0, outline_color: "#000000", text_color: "#ffffff", head_color: "#c8c8d2" };
+  const d = settings?.display ?? { layout: "yoko", bg: "#16161d", font_head: 22, font_power: 72, font_set: 30, outline_px: 0, outline_color: "#000000", x_color: "#2bd9c4", bankara_color: "#ff7a2e", set_color: "#f3ea6a", head_color: "#c8c8d2" };
   // 縁取り: 字の外側にだけ描く（paint-order）。太さは外側に出る分なので 2 倍にする
   const outline = d.outline_px > 0 ? { WebkitTextStroke: `${d.outline_px * 2}px ${d.outline_color}`, paintOrder: "stroke fill" } : {};
   const layout = LAYOUTS[d.layout] ? d.layout : "yoko";
@@ -183,7 +183,7 @@ export default function DisplayApp() {
   return (
     <div
       className={`disp disp-${layout}`}
-      style={{ background: d.bg, color: d.text_color, padding: `${PAD.y}px ${PAD.x}px` }}
+      style={{ background: d.bg, color: isX ? d.x_color : isBankara ? d.bankara_color : "#ffffff", padding: `${PAD.y}px ${PAD.x}px` }}
       onMouseDown={onMouseDown}
       onContextMenu={onContextMenu}
     >
@@ -195,7 +195,7 @@ export default function DisplayApp() {
           </span>
           {layout === "tate" && powerEl}
           {showSet && (
-            <span className="disp-set" style={{ fontSize: d.font_set }}>
+            <span className="disp-set" style={{ fontSize: d.font_set, color: d.set_color }}>
               {setShown.wins}勝 {setShown.losses}敗
             </span>
           )}
