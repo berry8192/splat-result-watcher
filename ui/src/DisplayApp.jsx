@@ -3,10 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { Menu, MenuItem, CheckMenuItem, PredefinedMenuItem } from "@tauri-apps/api/menu";
 
-// 見せる窓: 配信ソフトのウィンドウキャプチャで配信に載せる前提の、字だけの小さな窓。
-// 枠は無く、左ドラッグで動かし、右クリックのメニューで置き方・背景を変える（字の大きさは設定の窓で）。
-// メニューは OS のもの（窓が小さいので、窓の中に描くと収まらない）。
-// 置き方・背景・字の大きさは settings.json の `display` に入り、設定の窓と共有する。窓の大きさは中身に合わせる。
+// 表示ウィンドウ: 配信ソフトのウィンドウキャプチャで配信に載せる前提の、字だけの小さな窓。
+// 枠は無く、左ドラッグで動かし、右クリックのメニュー（OS のもの。窓が小さいので窓の中には描かない）でレイアウト・背景を変える。
+// レイアウト・背景・文字サイズ・色は settings.json の `display` に入り、設定の窓と共有する。窓の大きさは中身に合わせる。
 
 const MODE_NAMES = { x: "Xマッチ", bankara_challenge: "バンカラ チャレンジ", bankara_open: "バンカラ オープン", bankara: "バンカラ", other: "" };
 const RULE_NAMES = { area: "ガチエリア", yagura: "ガチヤグラ", hoko: "ガチホコ", asari: "ガチアサリ", turf_war: "ナワバリバトル" };
@@ -20,6 +19,20 @@ export const BGS = [
 ];
 /** 窓の余白（論理 px） */
 const PAD = { x: 28, y: 22 };
+const DEFAULT_DISPLAY = {
+  layout: "yoko",
+  bg: "#16161d",
+  font_head: 22,
+  font_power: 72,
+  font_set: 30,
+  outline_px: 0,
+  outline_color: "#000000",
+  x_color: "#2bd9c4",
+  bankara_color: "#ff7a2e",
+  power_color: "#ffffff",
+  set_color: "#f3ea6a",
+  head_color: "#c8c8d2",
+};
 
 /** 出来事（新しい順）から、見せるものを拾う。それぞれ一番新しいものだけ */
 function pick(events) {
@@ -62,6 +75,24 @@ function pick(events) {
   return { mode, rule, xp, udemae, set };
 }
 
+/** 動きの確認の疑似の流れ（新しい順）。`t` は始めてからの秒。2 秒間は最後の試合の前、その後パワーが動く */
+function demoEvents(kind, t) {
+  const win = kind === "win";
+  const before = [
+    { type: "set_progress", wins: win ? 2 : 1, losses: win ? 1 : 2, match_id: "demo-1" },
+    { type: "result", outcome: win ? "lose" : "win", mode: "x", rule: "area", match_id: "demo-1" },
+    { type: "battle_started", mode: "x", rule: "area", match_id: "demo-1" },
+    { type: "observed", kind: "x", value: 2200.0, rule: "area" },
+  ];
+  if (t < 2) return before;
+  return [
+    { type: "power", kind: "x", before: 2200.0, after: win ? 2275.0 : 2125.0, calibrating: false, match_id: "demo-2", rule: "area" },
+    { type: "result", outcome: win ? "win" : "lose", mode: "x", rule: "area", match_id: "demo-2" },
+    { type: "battle_started", mode: "x", rule: "area", match_id: "demo-2" },
+    ...before,
+  ];
+}
+
 /** 値が変わったら、前の値から新しい値へ数え上げる（ドラムロール）。上がるときは 4 秒かけ、下がるときは 1.6 秒。
  * 動いている間は `rolling` */
 function useRolling(value) {
@@ -93,10 +124,10 @@ function useRolling(value) {
   return { shown, rolling };
 }
 
-function Power({ shown, isX, isBankara, size }) {
+function Power({ shown, isX, isBankara, size, color }) {
   if (shown == null) return null;
   return (
-    <span className="disp-power" style={{ fontSize: size }}>
+    <span className="disp-power" style={{ fontSize: size, color }}>
       {isX ? shown.toFixed(1) : Math.round(shown)}
       {isBankara && <small style={{ fontSize: Math.round(size * 0.42) }}>p</small>}
     </span>
@@ -106,6 +137,8 @@ function Power({ shown, isX, isBankara, size }) {
 export default function DisplayApp() {
   const [s, setS] = useState(null);
   const [settings, setSettings] = useState(null);
+  const [demo, setDemo] = useState(null);
+  const [, setTick] = useState(0);
   const box = useRef(null);
   const lastSize = useRef("");
 
@@ -123,12 +156,26 @@ export default function DisplayApp() {
     };
   }, []);
 
-  const d = settings?.display ?? { layout: "yoko", bg: "#16161d", font_head: 22, font_power: 72, font_set: 30, outline_px: 0, outline_color: "#000000", x_color: "#2bd9c4", bankara_color: "#ff7a2e", set_color: "#f3ea6a", head_color: "#c8c8d2" };
+  // 動きの確認: 設定の窓のボタンで立った合図を見つけたら、疑似の流れを 12 秒再生する
+  useEffect(() => {
+    const p = s?.preview;
+    if (p && (!demo || demo.id !== p.id)) setDemo({ id: p.id, kind: p.kind, start: Date.now() });
+  }, [s, demo]);
+  useEffect(() => {
+    if (!demo || demo.done) return;
+    const id = setInterval(() => {
+      if (Date.now() - demo.start > 12000) setDemo((cur) => (cur && cur.id === demo.id ? { ...cur, done: true } : cur));
+      else setTick((n) => n + 1);
+    }, 250);
+    return () => clearInterval(id);
+  }, [demo]);
+
+  const d = { ...DEFAULT_DISPLAY, ...(settings?.display ?? {}) };
   // 縁取り: 字の外側にだけ描く（paint-order）。太さは外側に出る分なので 2 倍にする
   const outline = d.outline_px > 0 ? { WebkitTextStroke: `${d.outline_px * 2}px ${d.outline_color}`, paintOrder: "stroke fill" } : {};
   const layout = LAYOUTS[d.layout] ? d.layout : "yoko";
 
-  // 窓の大きさを中身に合わせる（字の大きさや置き方が変わっても余白が同じ）
+  // 窓の大きさを中身に合わせる（字の大きさやレイアウトが変わっても余白が同じ）
   useLayoutEffect(() => {
     const el = box.current;
     if (!el) return;
@@ -168,8 +215,11 @@ export default function DisplayApp() {
     await menu.popup();
   };
 
-  const { mode, rule, xp, udemae, set } = pick(s?.events ?? []);
-  const head = [MODE_NAMES[mode] ?? "", RULE_NAMES[rule] ?? ""].filter(Boolean).join(" ");
+  const playing = demo && !demo.done;
+  const events = playing ? demoEvents(demo.kind, (Date.now() - demo.start) / 1000) : (s?.events ?? []);
+  const { mode, rule, xp, udemae, set } = pick(events);
+  const modeName = MODE_NAMES[mode] ?? "";
+  const ruleName = RULE_NAMES[rule] ?? "";
   const isX = mode === "x";
   const isBankara = mode != null && mode.startsWith("bankara");
   const power = isX ? xp : isBankara ? udemae : null;
@@ -177,13 +227,13 @@ export default function DisplayApp() {
   // パワーが動いている間は、終わったセットの勝敗（3 勝目・3 敗目まで入れたもの）を見せ、止まったら 0 勝 0 敗に
   const setShown = set?.final && rolling ? set.final : set;
   const showSet = setShown && mode !== "bankara_open" && mode !== "other";
-  const note = !s ? "" : !s.source ? "N Air または OBS が見つかりません" : s.events.length === 0 ? "まだ試合を認識していません" : "";
-  const powerEl = shown != null && <Power shown={shown} isX={isX} isBankara={isBankara} size={d.font_power} />;
+  const note = !s ? "" : !s.source ? "N Air または OBS が見つかりません" : events.length === 0 ? "まだ試合を認識していません" : "";
+  const powerEl = shown != null && <Power shown={shown} isX={isX} isBankara={isBankara} size={d.font_power} color={d.power_color} />;
 
   return (
     <div
       className={`disp disp-${layout}`}
-      style={{ background: d.bg, color: isX ? d.x_color : isBankara ? d.bankara_color : "#ffffff", padding: `${PAD.y}px ${PAD.x}px` }}
+      style={{ background: d.bg, color: d.power_color, padding: `${PAD.y}px ${PAD.x}px` }}
       onMouseDown={onMouseDown}
       onContextMenu={onContextMenu}
     >
@@ -191,7 +241,8 @@ export default function DisplayApp() {
       <div className="disp-box" ref={box} style={outline}>
         <div className="disp-left">
           <span className="disp-head" style={{ fontSize: d.font_head, color: d.head_color }}>
-            {head || " "}
+            {modeName && <span style={{ color: isX ? d.x_color : isBankara ? d.bankara_color : d.head_color }}>{modeName} </span>}
+            {ruleName || (modeName ? "" : " ")}
           </span>
           {layout === "tate" && powerEl}
           {showSet && (

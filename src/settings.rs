@@ -47,17 +47,18 @@ pub struct DisplaySettings {
     /// 字の縁取りの太さ（px。0 で無し）と色。透明な背景で読めるようにする
     pub outline_px: u32,
     pub outline_color: String,
-    /// パワーの字の色。X マッチとバンカラで分ける（既定はゲームの配色に合わせて青緑と橙）
+    /// モード名の色（「Xマッチ」は青緑、「バンカラ」は橙。ゲームの配色に合わせた既定）
     pub x_color: String,
     pub bankara_color: String,
-    /// 勝敗の字の色（既定は薄い黄）と、モードとルールの色
+    /// パワー（既定は白）・勝敗（薄い黄）・ルール名（薄い灰）の色
+    pub power_color: String,
     pub set_color: String,
     pub head_color: String,
 }
 
 impl Default for DisplaySettings {
     fn default() -> Self {
-        DisplaySettings { layout: "yoko".into(), bg: "#16161d".into(), font_head: 22, font_power: 72, font_set: 30, outline_px: 0, outline_color: "#000000".into(), x_color: "#2bd9c4".into(), bankara_color: "#ff7a2e".into(), set_color: "#f3ea6a".into(), head_color: "#c8c8d2".into() }
+        DisplaySettings { layout: "yoko".into(), bg: "#16161d".into(), font_head: 22, font_power: 72, font_set: 30, outline_px: 0, outline_color: "#000000".into(), x_color: "#2bd9c4".into(), bankara_color: "#ff7a2e".into(), power_color: "#ffffff".into(), set_color: "#f3ea6a".into(), head_color: "#c8c8d2".into() }
     }
 }
 

@@ -102,14 +102,16 @@ export default function SettingsPage() {
           <input type="number" min="8" max="200" value={form.display.font_set} onChange={(e) => setD("font_set", Number(e.target.value))} />
         </label>
         <label>
-          文字色: パワー（X マッチ）
+          文字色: 「Xマッチ」
           <input type="color" value={form.display.x_color} onChange={(e) => setD("x_color", e.target.value)} />
-          　パワー（バンカラ）
+          　「バンカラ」
           <input type="color" value={form.display.bankara_color} onChange={(e) => setD("bankara_color", e.target.value)} />
+          　ルール
+          <input type="color" value={form.display.head_color} onChange={(e) => setD("head_color", e.target.value)} />
+          　パワー
+          <input type="color" value={form.display.power_color} onChange={(e) => setD("power_color", e.target.value)} />
           　勝敗
           <input type="color" value={form.display.set_color} onChange={(e) => setD("set_color", e.target.value)} />
-          　モードとルール
-          <input type="color" value={form.display.head_color} onChange={(e) => setD("head_color", e.target.value)} />
         </label>
         <label>
           縁取り（px、0 で無し）
@@ -118,6 +120,16 @@ export default function SettingsPage() {
           <input type="color" value={form.display.outline_color} onChange={(e) => setD("outline_color", e.target.value)} />
         </label>
         <div className="small">ウィンドウの大きさは文字に合わせて自動で変わります。配信には配信ソフトのウィンドウキャプチャで載せてください</div>
+        <div style={{ marginTop: 10 }}>
+          動きの確認:
+          <button style={{ marginLeft: 8 }} onClick={() => invoke("preview_display", { kind: "win" })}>
+            3 勝でセットが終わる
+          </button>
+          <button style={{ marginLeft: 6 }} onClick={() => invoke("preview_display", { kind: "lose" })}>
+            3 敗でセットが終わる
+          </button>
+          <span className="small">　表示ウィンドウだけで再生します（受信側には送りません）</span>
+        </div>
       </Section>
 
       <Section id="capture" title="キャプチャ">

@@ -87,6 +87,8 @@ impl Default for EngineConfig {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Snapshot {
     pub stage: String,
+    /// 表示ウィンドウの動きの確認（GUI の命令で立てる。受け手には流れない）
+    pub preview: Option<Preview>,
     pub projector: bool,
     /// 撮れている配信ソフト（"N Air" / "OBS"）。撮れていなければ None
     pub source: Option<String>,
@@ -108,6 +110,14 @@ pub struct Snapshot {
     pub events: Vec<Value>,
     /// 記録の行（新しい順）
     pub log: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Preview {
+    /// "win"（3 勝で終わる）か "lose"（3 敗で終わる）
+    pub kind: String,
+    /// 何回目か（表示ウィンドウが同じものを 2 度再生しないため）
+    pub id: u64,
 }
 
 struct Shared {
