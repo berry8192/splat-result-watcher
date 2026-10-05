@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { LAYOUTS, BGS } from "./DisplayApp.jsx";
 
@@ -33,6 +33,76 @@ const AREAS = {
   full: { x: 0, y: 0, w: 1920, h: 1080 },
   nicomment: { x: 0, y: 108, w: 1536, h: 864 },
 };
+
+/** 配信の出力のプレビューに、ゲーム画面の枠を重ねて、ドラッグで合わせる（枠の中: 移動、右下の角: 大きさ。16:9 を保つ） */
+function AreaPicker({ area, onChange }) {
+  const [img, setImg] = useState(null);
+  const box = useRef(null);
+  const drag = useRef(null);
+
+  useEffect(() => {
+    let alive = true;
+    const tick = () => invoke("output_frame", { maxW: 960 }).then((f) => alive && setImg(f)).catch(() => {});
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  // 1920×1080 の座標とプレビューの画素の変換
+  const scale = () => (box.current ? box.current.clientWidth / 1920 : 0.5);
+  const start = (e, kind) => {
+    e.preventDefault();
+    e.stopPropagation();
+    drag.current = { kind, x: e.clientX, y: e.clientY, area: { ...area } };
+    const move = (ev) => {
+      const d = drag.current;
+      if (!d) return;
+      const k = scale();
+      const dx = Math.round((ev.clientX - d.x) / k);
+      const dy = Math.round((ev.clientY - d.y) / k);
+      let a = { ...d.area };
+      if (d.kind === "move") {
+        a.x = Math.min(Math.max(0, d.area.x + dx), 1920 - a.w);
+        a.y = Math.min(Math.max(0, d.area.y + dy), 1080 - a.h);
+      } else {
+        a.w = Math.min(Math.max(320, d.area.w + dx), 1920 - a.x);
+        a.h = Math.round((a.w * 9) / 16);
+        if (a.y + a.h > 1080) {
+          a.h = 1080 - a.y;
+          a.w = Math.round((a.h * 16) / 9);
+        }
+      }
+      onChange(a);
+    };
+    const up = () => {
+      drag.current = null;
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
+
+  const pct = (v, base) => `${(v / base) * 100}%`;
+  return (
+    <div className="area-picker" ref={box}>
+      {img ? <img src={img} alt="配信の出力" draggable={false} /> : <div className="noframe">まだキャプチャできていません</div>}
+      {img && (
+        <div
+          className="area-rect"
+          style={{ left: pct(area.x, 1920), top: pct(area.y, 1080), width: pct(area.w, 1920), height: pct(area.h, 1080) }}
+          onMouseDown={(e) => start(e, "move")}
+        >
+          <span className="area-label">ゲーム画面</span>
+          <span className="area-handle" onMouseDown={(e) => start(e, "resize")} />
+        </div>
+      )}
+    </div>
+  );
+}
 
 function areaPreset(a) {
   const hit = Object.entries(AREAS).find(([, p]) => p.x === a.x && p.y === a.y && p.w === a.w && p.h === a.h);
@@ -69,7 +139,6 @@ export default function SettingsPage() {
       form.capture_from !== saved.capture_from ||
       form.obs_port !== saved.obs_port ||
       form.obs_password !== saved.obs_password ||
-      JSON.stringify(form.game_area) !== JSON.stringify(saved.game_area) ||
       form.hit_log !== saved.hit_log);
 
   const save = async () => {
@@ -179,9 +248,14 @@ export default function SettingsPage() {
             <input type="number" value={form.game_area.h} onChange={(e) => setArea("h", e.target.value)} />
           </div>
           <div className="small">
-            配信の画面を 1920×1080 としたときの位置です。ゲーム画面は 16:9 にしてください。状態のページのプレビューに、切り出したゲーム画面が表示されます
+            配信の画面を 1920×1080 としたときの位置です。ゲーム画面は 16:9 にしてください。「保存」ですぐに反映され、状態のページのプレビューに切り出したゲーム画面が表示されます
           </div>
         </label>
+        <div className="small" style={{ marginTop: 8 }}>
+          下の配信画面の上で、枠をドラッグして合わせることもできます（枠の中: 移動、右下の角: 大きさ）。
+          ゲームのメニューやロビーなど、画面の端がはっきり見える場面で合わせると分かりやすいです。
+        </div>
+        <AreaPicker area={form.game_area} onChange={(a) => set("game_area", a)} />
       </Section>
 
       <Section id="server" title="接続">

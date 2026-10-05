@@ -79,6 +79,13 @@ fn frame(app: State<App>, max_w: u32) -> Option<String> {
     Some(jpeg_url(&f, max_w))
 }
 
+/// 最新の配信の出力そのもの（設定でゲーム画面の位置を合わせるときに枠を重ねる）
+#[tauri::command]
+fn output_frame(app: State<App>, max_w: u32) -> Option<String> {
+    let f = app.engine.lock().unwrap().output()?;
+    Some(jpeg_url(&f, max_w))
+}
+
 /// 設定・手動作業の窓を開く（開いていれば前に出す）。
 /// Windows では同期の命令の中で窓を作ると WebView2 が立ち上がれず、中身が真っ白のままになるので async にする
 #[tauri::command]
@@ -114,7 +121,9 @@ fn get_settings() -> Settings {
 #[tauri::command]
 fn save_settings(app: State<App>, settings: Settings) -> Res<()> {
     settings.save().map_err(err)?;
-    app.engine.lock().unwrap().set_record(settings.record);
+    let engine = app.engine.lock().unwrap();
+    engine.set_record(settings.record);
+    engine.set_game_area(settings.game_area);
     Ok(())
 }
 
@@ -452,6 +461,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             status,
             frame,
+            output_frame,
             set_record,
             get_settings,
             save_settings,

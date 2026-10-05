@@ -126,6 +126,10 @@ struct Shared {
     log_count: AtomicU64,
     /// 最新のゲーム穴（撮ったまま）
     frame: Mutex<Option<RgbImage>>,
+    /// 最新の配信の出力そのもの（設定でゲーム画面の位置を合わせるときのプレビュー）
+    output: Mutex<Option<RgbImage>>,
+    /// 出力の中のゲーム画面の位置（設定を保存するとすぐ効く）
+    game_area: Mutex<GameArea>,
     /// 直近の画面（古い順。映像なしは入れない）
     recent: Mutex<VecDeque<RecentFrame>>,
     recent_bytes: AtomicU64,
@@ -181,6 +185,8 @@ impl Engine {
             log: Mutex::new(VecDeque::new()),
             log_count: AtomicU64::new(0),
             frame: Mutex::new(None),
+            output: Mutex::new(None),
+            game_area: Mutex::new(cfg.game_area),
             recent: Mutex::new(VecDeque::new()),
             recent_bytes: AtomicU64::new(0),
             recognizer: RwLock::new(Recognizer::new(templates)),
@@ -224,6 +230,16 @@ impl Engine {
     /// 最新のゲーム穴
     pub fn frame(&self) -> Option<RgbImage> {
         self.shared.frame.lock().unwrap().clone()
+    }
+
+    /// 最新の配信の出力そのもの（切り出す前）
+    pub fn output(&self) -> Option<RgbImage> {
+        self.shared.output.lock().unwrap().clone()
+    }
+
+    /// ゲーム画面の位置を変える（設定の保存から。次のフレームから効く）
+    pub fn set_game_area(&self, area: GameArea) {
+        *self.shared.game_area.lock().unwrap() = area;
     }
 
     /// 直近の画面（古い順）。見本の登録で、遊んだ後に戻って選ぶ
@@ -396,17 +412,19 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
         let mut frame_img: Option<RgbImage> = None;
         let reading = match projector.as_mut().map(|p| p.capture()) {
             Some(Ok(img)) if !read_now => {
-                let game = layout::crop_game(&img, cfg.game_area);
+                let game = layout::crop_game(&img, *s.game_area.lock().unwrap());
                 if !in_battle && nair::dark_ratio(&game) <= crate::NO_SIGNAL_DARK {
                     keep_recent(s, &game, last_seen.clone());
                 }
                 *s.frame.lock().unwrap() = Some(game);
+                *s.output.lock().unwrap() = Some(img);
                 continue;
             }
             Some(Ok(img)) => {
                 times.push(t.elapsed().as_secs_f64() * 1000.0);
                 last_read = Some(Instant::now());
-                let game = layout::crop_game(&img, cfg.game_area);
+                let game = layout::crop_game(&img, *s.game_area.lock().unwrap());
+                *s.output.lock().unwrap() = Some(img);
                 let reading = s.recognizer.read().unwrap().recognize(&game);
                 if let Some(r) = &recorder {
                     if reading.seen != Seen::NoSignal {
