@@ -31,7 +31,7 @@ const DEFAULT_DISPLAY = {
   bankara_color: "#ff7a2e",
   power_color: "#ffffff",
   set_color: "#f3ea6a",
-  head_color: "#c8c8d2",
+  head_color: "#5aa9ff",
 };
 
 /** 出来事（新しい順）から、見せるものを拾う。それぞれ一番新しいものだけ */
@@ -73,24 +73,6 @@ function pick(events) {
     set.final = { wins: ended.prev.wins + (win ? 1 : 0), losses: ended.prev.losses + (win ? 0 : 1) };
   }
   return { mode, rule, xp, udemae, set };
-}
-
-/** 動きの確認の疑似の流れ（新しい順）。`t` は始めてからの秒。2 秒間は最後の試合の前、その後パワーが動く */
-function demoEvents(kind, t) {
-  const win = kind === "win";
-  const before = [
-    { type: "set_progress", wins: win ? 2 : 1, losses: win ? 1 : 2, match_id: "demo-1" },
-    { type: "result", outcome: win ? "lose" : "win", mode: "x", rule: "area", match_id: "demo-1" },
-    { type: "battle_started", mode: "x", rule: "area", match_id: "demo-1" },
-    { type: "observed", kind: "x", value: 2200.0, rule: "area" },
-  ];
-  if (t < 2) return before;
-  return [
-    { type: "power", kind: "x", before: 2200.0, after: win ? 2275.0 : 2125.0, calibrating: false, match_id: "demo-2", rule: "area" },
-    { type: "result", outcome: win ? "win" : "lose", mode: "x", rule: "area", match_id: "demo-2" },
-    { type: "battle_started", mode: "x", rule: "area", match_id: "demo-2" },
-    ...before,
-  ];
 }
 
 /** 値が変わったら、前の値から新しい値へ数え上げる（ドラムロール）。上がるときは 4 秒かけ、下がるときは 1.6 秒。
@@ -137,8 +119,6 @@ function Power({ shown, isX, isBankara, size, color }) {
 export default function DisplayApp() {
   const [s, setS] = useState(null);
   const [settings, setSettings] = useState(null);
-  const [demo, setDemo] = useState(null);
-  const [, setTick] = useState(0);
   const box = useRef(null);
   const lastSize = useRef("");
 
@@ -155,20 +135,6 @@ export default function DisplayApp() {
       clearInterval(id);
     };
   }, []);
-
-  // 動きの確認: 設定の窓のボタンで立った合図を見つけたら、疑似の流れを 12 秒再生する
-  useEffect(() => {
-    const p = s?.preview;
-    if (p && (!demo || demo.id !== p.id)) setDemo({ id: p.id, kind: p.kind, start: Date.now() });
-  }, [s, demo]);
-  useEffect(() => {
-    if (!demo || demo.done) return;
-    const id = setInterval(() => {
-      if (Date.now() - demo.start > 12000) setDemo((cur) => (cur && cur.id === demo.id ? { ...cur, done: true } : cur));
-      else setTick((n) => n + 1);
-    }, 250);
-    return () => clearInterval(id);
-  }, [demo]);
 
   const d = { ...DEFAULT_DISPLAY, ...(settings?.display ?? {}) };
   // 縁取り: 字の外側にだけ描く（paint-order）。太さは外側に出る分なので 2 倍にする
@@ -215,8 +181,7 @@ export default function DisplayApp() {
     await menu.popup();
   };
 
-  const playing = demo && !demo.done;
-  const events = playing ? demoEvents(demo.kind, (Date.now() - demo.start) / 1000) : (s?.events ?? []);
+  const events = s?.events ?? [];
   const { mode, rule, xp, udemae, set } = pick(events);
   const modeName = MODE_NAMES[mode] ?? "";
   const ruleName = RULE_NAMES[rule] ?? "";

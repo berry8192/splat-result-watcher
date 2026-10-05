@@ -120,16 +120,6 @@ export default function SettingsPage() {
           <input type="color" value={form.display.outline_color} onChange={(e) => setD("outline_color", e.target.value)} />
         </label>
         <div className="small">ウィンドウの大きさは文字に合わせて自動で変わります。配信には配信ソフトのウィンドウキャプチャで載せてください</div>
-        <div style={{ marginTop: 10 }}>
-          動きの確認:
-          <button style={{ marginLeft: 8 }} onClick={() => invoke("preview_display", { kind: "win" })}>
-            3 勝でセットが終わる
-          </button>
-          <button style={{ marginLeft: 6 }} onClick={() => invoke("preview_display", { kind: "lose" })}>
-            3 敗でセットが終わる
-          </button>
-          <span className="small">　表示ウィンドウだけで再生します（受信側には送りません）</span>
-        </div>
       </Section>
 
       <Section id="capture" title="キャプチャ">

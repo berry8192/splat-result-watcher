@@ -50,7 +50,7 @@ pub struct DisplaySettings {
     /// モード名の色（「Xマッチ」は青緑、「バンカラ」は橙。ゲームの配色に合わせた既定）
     pub x_color: String,
     pub bankara_color: String,
-    /// パワー（既定は白）・勝敗（薄い黄）・ルール名（薄い灰）の色
+    /// パワー（既定は白）・勝敗（薄い黄）・ルール名（青）の色
     pub power_color: String,
     pub set_color: String,
     pub head_color: String,
@@ -58,7 +58,7 @@ pub struct DisplaySettings {
 
 impl Default for DisplaySettings {
     fn default() -> Self {
-        DisplaySettings { layout: "yoko".into(), bg: "#16161d".into(), font_head: 22, font_power: 72, font_set: 30, outline_px: 0, outline_color: "#000000".into(), x_color: "#2bd9c4".into(), bankara_color: "#ff7a2e".into(), power_color: "#ffffff".into(), set_color: "#f3ea6a".into(), head_color: "#c8c8d2".into() }
+        DisplaySettings { layout: "yoko".into(), bg: "#16161d".into(), font_head: 22, font_power: 72, font_set: 30, outline_px: 0, outline_color: "#000000".into(), x_color: "#2bd9c4".into(), bankara_color: "#ff7a2e".into(), power_color: "#ffffff".into(), set_color: "#f3ea6a".into(), head_color: "#5aa9ff".into() }
     }
 }
 

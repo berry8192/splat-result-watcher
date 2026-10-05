@@ -29,8 +29,6 @@ struct App {
     source: Mutex<Option<RgbImage>>,
     /// 取り込んだ直近の画面（見ている間に流れていかないよう、取り込んだ時点のものを持つ）
     held: Mutex<Vec<RecentFrame>>,
-    /// 表示ウィンドウの動きの確認（種類, 通し番号, 立てた時刻）。30 秒で消える
-    preview: Mutex<Option<(String, u64, std::time::Instant)>>,
 }
 
 type Res<T> = Result<T, String>;
@@ -71,22 +69,7 @@ fn pool_by_name(name: &str) -> Res<Pool> {
 
 #[tauri::command]
 fn status(app: State<App>) -> Snapshot {
-    let mut snap = app.engine.lock().unwrap().snapshot();
-    if let Some((kind, id, at)) = app.preview.lock().unwrap().as_ref() {
-        if at.elapsed() < std::time::Duration::from_secs(30) {
-            snap.preview = Some(splat_result_watcher::engine::Preview { kind: kind.clone(), id: *id });
-        }
-    }
-    snap
-}
-
-/// 表示ウィンドウの動きの確認。表示ウィンドウが疑似の流れ（3 勝か 3 敗でセットが終わり、パワーが動く）を再生する。
-/// 受け手には何も流さない
-#[tauri::command]
-fn preview_display(app: State<App>, kind: String) {
-    let mut p = app.preview.lock().unwrap();
-    let id = p.as_ref().map_or(1, |(_, id, _)| id + 1);
-    *p = Some((kind, id, std::time::Instant::now()));
+    app.engine.lock().unwrap().snapshot()
 }
 
 /// 最新のゲーム穴（プレビュー）
@@ -445,7 +428,7 @@ fn main() {
             if let Some(w) = warn {
                 eprintln!("{w}");
             }
-            app.manage(App { engine: Mutex::new(engine), source: Mutex::new(None), held: Mutex::new(Vec::new()), preview: Mutex::new(None) });
+            app.manage(App { engine: Mutex::new(engine), source: Mutex::new(None), held: Mutex::new(Vec::new()) });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -473,7 +456,6 @@ fn main() {
             get_settings,
             save_settings,
             reset_game,
-            preview_display,
             open_settings,
             places,
             source_from_live,
