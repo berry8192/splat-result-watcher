@@ -599,3 +599,12 @@ body.display-window #root {
   color: var(--dim);
   line-height: 1.6;
 }
+
+/* アプリからの知らせ */
+.advice {
+  margin-bottom: 12px;
+  line-height: 1.6;
+}
+.advice div + div {
+  margin-top: 4px;
+}

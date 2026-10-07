@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { pick } from "./DisplayApp.jsx";
+import Advice from "./Advice.jsx";
 
 // 手動操作: 表示ウィンドウと受信側の値を手で直す。直した値は `manual` イベントとして送られる
 // （差分ではなく直した後の値。何度届いても同じ結果になる）。
@@ -57,6 +58,7 @@ export default function ManualPage() {
 
   return (
     <div className="page manual">
+      <Advice list={s.advice} />
       <div className="manual-now">
         <span className="small">現在の表示</span>
         <span>

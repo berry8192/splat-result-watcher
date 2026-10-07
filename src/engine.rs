@@ -40,6 +40,10 @@ pub const KEEP_RECENT_BYTES: usize = 200 * 1024 * 1024;
 pub const FAST_INTERVAL: Duration = Duration::from_millis(200);
 /// バトル中は見本に要る画面がほぼ無いので、読めなかった画面は 5 秒に 1 枚だけ溜める
 const BATTLE_KEEP_EVERY: Duration = Duration::from_secs(5);
+/// 知らせ（食い違い・見送り）を出しておく間
+const NOTICE_KEEP: Duration = Duration::from_secs(10 * 60);
+/// 映像が動いているのに何も読めない間がこれだけ続いたら、ゲーム画面の位置を疑う（試合は長くても 5 分ほど）
+const AREA_SUSPECT: Duration = Duration::from_secs(8 * 60);
 
 /// 直近の画面 1 枚（ゲーム穴を JPEG にしたもの）と、そのとき見えたもの
 #[derive(Clone, Debug)]
@@ -108,6 +112,8 @@ pub struct Snapshot {
     pub server_error: Option<String>,
     /// 足りない見本（設定の画面と見せる窓で知らせる）
     pub template_gaps: Vec<String>,
+    /// 利用者への知らせ（入力を促す・確度が低い。設定ウィンドウに出す。配信に載る表示ウィンドウには出さない）
+    pub advice: Vec<String>,
     /// 流した出来事（新しい順）
     pub events: Vec<Value>,
     /// 記録の行（新しい順）
@@ -357,6 +363,11 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
     let mut recorder: Option<Recorder> = None;
     // 最後に録画した 1 枚の縮小と時刻
     let mut last_record: Option<(Vec<u8>, Instant)> = None;
+    // 知らせ（しばらく出しておくもの）と、ゲーム画面の位置のずれを疑うための、最後に何か読めた時刻・映像が動いた時刻と縮小
+    let mut notices: VecDeque<(String, Instant)> = VecDeque::new();
+    let mut last_known_screen = Instant::now();
+    let mut last_moving: Option<Instant> = None;
+    let mut last_thumb: Option<Vec<u8>> = None;
     let mut last_open_try: Option<Instant> = None;
     let mut interval = INTERVAL;
     // 今の撮る間隔（段階で変わる）。照合は `interval` ごと
@@ -457,9 +468,13 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
                 let game = layout::crop_game(&img, *s.game_area.lock().unwrap());
                 *s.output.lock().unwrap() = Some(img);
                 let reading = s.recognizer.read().unwrap().recognize(&game);
+                let thumb = still::thumb(&game);
+                if last_thumb.as_ref().is_some_and(|t| still::diff(t, &thumb) >= still::CHANGED) {
+                    last_moving = Some(Instant::now());
+                }
+                last_thumb = Some(thumb.clone());
                 if let Some(r) = &recorder {
                     // 何も読めず前に残した 1 枚とほとんど変わらない間（配信の待ち画面・止まった画面）は、30 秒に 1 枚だけ
-                    let thumb = still::thumb(&game);
                     let changed = last_record.as_ref().is_none_or(|(t, at)| {
                         still::diff(t, &thumb) >= still::CHANGED || at.elapsed() >= still::KEEP_EVERY
                     });
@@ -539,6 +554,18 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
                 learned_notes.push(line);
             }
         }
+        // 知らせ: 画面の値との食い違い（状態）・覚えるのを見送った（見本）
+        for n in machine.take_notices().into_iter().chain(learner.take_warnings()) {
+            s.log(format!("お知らせ: {n}"));
+            if !notices.iter().any(|(t, _)| *t == n) {
+                notices.push_back((n, Instant::now()));
+            }
+        }
+        notices.retain(|(_, at)| at.elapsed() < NOTICE_KEEP);
+        // ゲーム画面の位置: 映像は動いているのに、試合中でもなくしばらく何も読めない
+        if !matches!(reading.seen, Seen::Unknown | Seen::NoSignal) {
+            last_known_screen = Instant::now();
+        }
         if let Some(h) = hits.as_mut() {
             h.record(machine.stage().as_str(), &reading, &learned_notes, &events, frame_img.as_ref());
         }
@@ -599,6 +626,22 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
         }
         snap.seen = seen_text;
         snap.notes = reading.notes;
+        let mut advice = Vec::new();
+        if machine.needs_udemae() {
+            advice.push(
+                "ウデマエポイントがまだ分かっていません。ロビーのメニューに出ている値を「手動操作」で入力すると、以降は精算のたびに自動で更新されます"
+                    .to_string(),
+            );
+        }
+        let moving = last_moving.is_some_and(|t| t.elapsed() < Duration::from_secs(60));
+        if moving && st != crate::state::Stage::InBattle.as_str() && last_known_screen.elapsed() >= AREA_SUSPECT {
+            advice.push(format!(
+                "映像は動いていますが、{} 分以上読み取れた画面がありません。ロビーを歩いているだけなら問題ありませんが、そうでなければ設定の「ゲーム画面の位置」が配信の画面と合っているか確かめてください",
+                AREA_SUSPECT.as_secs() / 60
+            ));
+        }
+        advice.extend(notices.iter().map(|(t, _)| t.clone()));
+        snap.advice = advice;
     }
     s.log("停止します".into());
     drop(projector);

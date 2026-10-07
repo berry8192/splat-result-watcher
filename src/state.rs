@@ -401,6 +401,8 @@ pub struct Machine {
     medals_pending: bool,
     /// 最後のチャレンジの試合
     challenge_match: Option<String>,
+    /// 利用者に知らせること（設定ウィンドウに出す）
+    notices: Vec<String>,
 }
 
 /// 進行中のチャレンジ
@@ -492,12 +494,25 @@ impl Machine {
             rank: None,
             medals_pending: false,
             challenge_match: None,
+            notices: Vec::new(),
         }
     }
 
     /// 手で直したウデマエポイント（設定ウィンドウの「手動操作」）
     pub fn set_known_udemae(&mut self, v: i32) {
         self.known_udemae = Some(v);
+    }
+
+    /// バンカラの画面（ランク・選んでいるモード）が見えているのに、元のウデマエポイントが分からない
+    /// （精算の増減を足せない。手動操作で入れてもらう）
+    pub fn needs_udemae(&self) -> bool {
+        let bankara = |m: Mode| matches!(m, Mode::BankaraChallenge | Mode::BankaraOpen);
+        self.known_udemae.is_none() && (self.rank.is_some() || self.lobby.latest.is_some_and(|(m, _)| bankara(m)))
+    }
+
+    /// 利用者に知らせること（出したら消える）
+    pub fn take_notices(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.notices)
     }
 
     /// 控えるもの（今の試合と通し番号）。試合が無ければ `null` の試合を控える
@@ -868,7 +883,11 @@ impl Machine {
     fn pay_fee(&mut self, at: DateTime<Utc>, out: &mut Vec<Value>) {
         let Some(f) = self.pending_fee.take().filter(|f| at - f.at <= Duration::seconds(FEE_WITHIN)) else { return };
         match f.after() {
-            Some(v) => out.push(json!({"type": "observed", "kind": "udemae", "value": v, "at": time(at)})),
+            Some(v) => {
+                // 計算で出した値なので、画面の値との食い違いとしては比べない
+                self.known_udemae = Some(v);
+                out.push(json!({"type": "observed", "kind": "udemae", "value": v, "at": time(at)}))
+            }
             None => self.known_udemae = None,
         }
     }
@@ -882,6 +901,14 @@ impl Machine {
                 _ => None,
             };
             if let Some(v) = v {
+                // 画面で読めた値が、覚えていた値（手動操作・精算の計算）と違う: 入力の間違いか、精算の読み落とし
+                if ev["type"] == "observed" {
+                    if let Some(k) = self.known_udemae.filter(|&k| k != v as i32) {
+                        self.notices.push(format!(
+                            "ウデマエポイントを {k}p と見ていましたが、画面では {v}p でした。画面の値に合わせました（入力した値か、途中の精算の読み落としを確かめてください）"
+                        ));
+                    }
+                }
                 self.known_udemae = Some(v as i32);
             }
         }
@@ -1603,6 +1630,25 @@ mod tests {
         let mut r = Run::new();
         r.intro(Rule::Asari).feed(Seen::Outcome(Outcome::Lose), 6).wait(5).feed(h(Note::Uncounted), 5).wait(60);
         assert!(r.of("medals").is_empty());
+    }
+
+    #[test]
+    fn notices_ask_for_points_and_tell_a_mismatch() {
+        let mut r = Run::new();
+        assert!(!r.m.needs_udemae(), "バンカラの画面を見るまでは聞かない");
+        r.feed(Seen::Lobby { mode: Mode::BankaraOpen, rule: Rule::Asari }, 4);
+        assert!(r.m.needs_udemae());
+        r.m.set_known_udemae(300);
+        assert!(!r.m.needs_udemae());
+        // 画面で読めた値が覚えていた値と違えば知らせ、画面の値に合わせる
+        let mv = |v| Seen::MatchingValue { mode: Mode::BankaraOpen, what: Observed::Udemae { value: Some(v), rank: None }, wins: None, losses: None };
+        r.feed(mv(287), 4);
+        let n = r.m.take_notices();
+        assert_eq!(n.len(), 1, "{n:?}");
+        assert!(n[0].contains("300p") && n[0].contains("287p"));
+        assert_eq!(r.m.known_udemae, Some(287));
+        r.feed(Seen::Unknown, 2).feed(mv(287), 4);
+        assert!(r.m.take_notices().is_empty(), "合っていれば知らせない");
     }
 
     #[test]

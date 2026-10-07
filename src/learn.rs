@@ -92,6 +92,8 @@ pub struct Learner {
     /// 状態が出した確かなウデマエポイント（精算の計算・参加費・手動操作）と時刻・何試合目の後か。
     /// その後のメニュー・マッチングの数字をこれで埋める
     known_udemae: Option<(i64, DateTime<Utc>, u64)>,
+    /// 利用者に知らせること（確かなはずの値と画面の数字の形が合わず、覚えるのを見送った）
+    warnings: Vec<String>,
 }
 
 /// 「2194.6」「+94.6」を 0.1 単位の整数に
@@ -172,6 +174,11 @@ impl Learner {
         out
     }
 
+    /// 利用者に知らせること（出したら消える）
+    pub fn take_warnings(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.warnings)
+    }
+
     /// 状態が出した確かなウデマエポイントを受け取る（`power` の `after`・参加費の後の値・手動操作の値）
     pub fn known_udemae(&mut self, at: DateTime<Utc>, value: i64) {
         self.known_udemae = Some((value, at, self.battle));
@@ -182,7 +189,7 @@ impl Learner {
     }
 
     /// `place` が落ち着いたときに、埋められるものを探す
-    fn infer(&self, place: &str, t: &Templates) -> Vec<Learned> {
+    fn infer(&mut self, place: &str, t: &Templates) -> Vec<Learned> {
         let mut out = Vec::new();
 
         // 同じ画面の中の計算: 動く前 + 増減（TOTAL）= 動いた後
@@ -245,7 +252,14 @@ impl Learner {
             if let Some(m) = self.settled(place).last() {
                 if m.battle == battle && m.at >= since && m.at - since <= Duration::seconds(SAME_VALUE_WITHIN) && !complete(&m.read) {
                     let why = format!("確かなウデマエポイント {v}（精算の計算・参加費・手動操作）と、その後の {place} は同じ値");
-                    out.extend(fill(place, &m.read, &v.to_string(), &why, Verified::Known, t));
+                    if consistent(&m.read, &v.to_string()) {
+                        out.extend(fill(place, &m.read, &v.to_string(), &why, Verified::Known, t));
+                    } else {
+                        self.known_udemae = None;
+                        self.warnings.push(format!(
+                            "{v}p を答えにメニューの数字を覚えようとしましたが、画面の数字の形と合わないので見送りました（入力した値か、ゲーム画面の位置を確かめてください）"
+                        ));
+                    }
                 }
             }
         }
@@ -291,6 +305,30 @@ enum Verified {
     Known,
 }
 
+/// 答え `expected` で埋めたとき、同じ数字の中で同じ字は同じ形・違う字は違う形になるか（字の数が違えば false）
+fn consistent(read: &GlyphRead, expected: &str) -> bool {
+    if read.glyphs.len() != expected.chars().count() {
+        return false;
+    }
+    let shapes: Vec<(char, &Patch)> = expected
+        .chars()
+        .zip(&read.glyphs)
+        .filter_map(|(c, g)| match g {
+            Glyph::Shape(p) => Some((c, p)),
+            _ => None,
+        })
+        .collect();
+    for (i, (c1, p1)) in shapes.iter().enumerate() {
+        for (c2, p2) in &shapes[i + 1..] {
+            let v = matching::glyph_iou(p1, p2);
+            if (c1 == c2 && v < SAME_SHAPE) || (c1 != c2 && v >= CONFLICT) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// `read` の読めない字を `expected` で埋める。確度の条件を満たさなければ空
 fn fill(place_id: &str, read: &GlyphRead, expected: &str, why: &str, how: Verified, t: &Templates) -> Vec<Learned> {
     let Some(place) = templates::place(place_id) else { return Vec::new() };
@@ -312,23 +350,8 @@ fn fill(place_id: &str, read: &GlyphRead, expected: &str, why: &str, how: Verifi
     if (0..got.len()).any(|i| got[i] != '?' && got[i] != want[i]) {
         return Vec::new();
     }
-    if how == Verified::Known {
-        let shapes: Vec<(char, &Patch)> = want
-            .iter()
-            .zip(&read.glyphs)
-            .filter_map(|(c, g)| match g {
-                Glyph::Shape(p) => Some((*c, p)),
-                _ => None,
-            })
-            .collect();
-        for (i, (c1, p1)) in shapes.iter().enumerate() {
-            for (c2, p2) in &shapes[i + 1..] {
-                let v = matching::glyph_iou(p1, p2);
-                if (c1 == c2 && v < SAME_SHAPE) || (c1 != c2 && v >= CONFLICT) {
-                    return Vec::new();
-                }
-            }
-        }
+    if how == Verified::Known && !consistent(read, expected) {
+        return Vec::new();
     }
     let mut out = Vec::new();
     for i in unknown {
@@ -708,6 +731,16 @@ mod tests {
         r.feed(Seen::Unknown, &[("power_number", rd("2147.3", "2147.3"))], 4).wait(30);
         r.feed(Seen::Unknown, &[("menu_x_value", rdg("21?7.3", "2197.3", "2147.3"))], 4);
         assert!(r.got.is_empty());
+    }
+
+    #[test]
+    fn a_known_value_that_does_not_fit_the_shapes_is_reported_once() {
+        let mut r = Run::new();
+        r.l.known_udemae(r.at, 1057);
+        r.feed(Seen::Unknown, &[("menu_udemae_value", rd("????", "1051"))], 6);
+        assert!(r.got.is_empty());
+        assert_eq!(r.l.take_warnings().len(), 1);
+        assert!(r.l.take_warnings().is_empty());
     }
 
     fn seen_shape(place: &'static str, label: &'static str, n: u8) -> ShapeLabel {

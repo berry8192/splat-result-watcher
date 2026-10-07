@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import Advice from "./Advice.jsx";
 
 const STAGE_NAMES = {
   no_signal: "映像なし",
@@ -58,6 +59,7 @@ export default function StatusPage() {
 
   return (
     <div className="page status">
+      <Advice list={s.advice} />
       <div className="row">
         <div className="col preview">
           {frame ? <img src={frame} alt="ゲーム画面" /> : <div className="noframe">まだキャプチャできていません</div>}
