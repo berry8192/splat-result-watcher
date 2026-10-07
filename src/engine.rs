@@ -501,6 +501,15 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
         }
         // 読めない字を、ほかの確かな数字から埋められたら見本に足す（確度の高いものだけ。learn.rs）
         // 形と色で見分けた見出しも、別の画面で確かめられたら見本に足す
+        let events = machine.feed(Utc::now(), reading.seen.clone());
+        // 精算の前後の値（直前の値 + 読めた増減）で、ゲージの下の数字を覚える
+        for ev in &events {
+            if let (Some("power"), Some("udemae"), Some(b), Some(a)) =
+                (ev["type"].as_str(), ev["kind"].as_str(), ev["before"].as_i64(), ev["after"].as_i64())
+            {
+                learner.points(Utc::now(), b, a);
+            }
+        }
         let learned = {
             let r = s.recognizer.read().unwrap();
             let now = Utc::now();
@@ -520,7 +529,6 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
                 learned_notes.push(line);
             }
         }
-        let events = machine.feed(Utc::now(), reading.seen.clone());
         if let Some(h) = hits.as_mut() {
             h.record(machine.stage().as_str(), &reading, &learned_notes, &events, frame_img.as_ref());
         }
