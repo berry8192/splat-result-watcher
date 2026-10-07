@@ -351,6 +351,8 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
     let mut hits = cfg.hits_dir.clone().map(HitLog::new);
     let mut projector: Option<Source> = None;
     let mut recorder: Option<Recorder> = None;
+    // 最後に録画した 1 枚の縮小と時刻
+    let mut last_record: Option<(Vec<u8>, Instant)> = None;
     let mut last_open_try: Option<Instant> = None;
     let mut interval = INTERVAL;
     // 今の撮る間隔（段階で変わる）。照合は `interval` ごと
@@ -452,8 +454,14 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
                 *s.output.lock().unwrap() = Some(img);
                 let reading = s.recognizer.read().unwrap().recognize(&game);
                 if let Some(r) = &recorder {
-                    if reading.seen != Seen::NoSignal {
+                    // 何も読めず前に残した 1 枚とほとんど変わらない間（配信の待ち画面・止まった画面）は、30 秒に 1 枚だけ
+                    let thumb = still::thumb(&game);
+                    let changed = last_record.as_ref().is_none_or(|(t, at)| {
+                        still::diff(t, &thumb) >= still::CHANGED || at.elapsed() >= still::KEEP_EVERY
+                    });
+                    if reading.seen != Seen::NoSignal && (reading.seen != Seen::Unknown || changed) {
                         r.push(Local::now(), game.clone());
+                        last_record = Some((thumb, Instant::now()));
                     }
                 }
                 let seen = format!("{:?}", reading.seen);
@@ -577,4 +585,28 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
     s.log("停止します".into());
     drop(projector);
     drop(recorder);
+}
+
+/// 止まった画面を見分ける（録画を減らす）
+mod still {
+    use std::time::Duration;
+
+    use image::imageops::{self, FilterType};
+    use image::RgbImage;
+
+    /// 縮小の明るさの差の平均（0〜255）がこれ以上なら変わった。配信の待ち画面は 0.11〜0.17、
+    /// マッチング中は 0.46〜1.25、メニューは 3.6〜4.1、試合中は 19〜44（2026-10-07 の録画）
+    pub const CHANGED: f64 = 0.25;
+    /// 変わらなくても、これだけ空いたら 1 枚残す
+    pub const KEEP_EVERY: Duration = Duration::from_secs(30);
+
+    pub fn thumb(img: &RgbImage) -> Vec<u8> {
+        let small = imageops::resize(img, 64, 36, FilterType::Triangle);
+        small.pixels().map(|p| ((p[0] as u32 * 77 + p[1] as u32 * 150 + p[2] as u32 * 29) >> 8) as u8).collect()
+    }
+
+    pub fn diff(a: &[u8], b: &[u8]) -> f64 {
+        let sum: u32 = a.iter().zip(b).map(|(x, y)| (*x as i32 - *y as i32).unsigned_abs()).sum();
+        sum as f64 / a.len().max(1) as f64
+    }
 }

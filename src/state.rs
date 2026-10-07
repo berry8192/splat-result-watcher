@@ -1048,8 +1048,9 @@ impl Machine {
                 "before": null, "after": g.post.reset.latest, "at": time(at)}));
         }
 
-        // 表彰（見出しの画面で数えておいたもの）。試合ごとに 1 回
-        if !g.post.medals_done && g.post.medals.first.is_some() {
+        // 表彰（見出しの画面で数えておいたもの）。試合ごとに 1 回。無効試合・負けとして数えない試合は集計されないので出さない
+        let uncounted = g.no_contest || matches!(g.header.map(|h| h.2), Some(Note::NoContest | Note::Uncounted));
+        if !g.post.medals_done && g.post.medals.first.is_some() && !uncounted {
             g.post.medals_done = true;
             let (gold, silver) = g.post.medals.first.unwrap();
             let mut ev = json!({"type": "medals", "match_id": g.id, "gold": gold, "silver": silver});
@@ -1591,6 +1592,17 @@ mod tests {
         // 試合の始まりでは出さない
         let started = r.events.iter().rposition(|e| e["type"] == "battle_started").unwrap();
         assert_ne!(r.events.get(started + 1).map(|e| e["type"].clone()), Some(json!("estimate")));
+    }
+
+    #[test]
+    fn medals_of_a_no_contest_are_not_sent() {
+        let mut r = Run::new();
+        let h = |note| Seen::Header { mode: Mode::BankaraChallenge, rule: Some(Rule::Asari), note, medals: Some((1, 0)) };
+        r.intro(Rule::Asari).feed(Seen::NoContestNotice, 4).wait(10).feed(h(Note::NoContest), 5).wait(60);
+        assert!(r.of("medals").is_empty());
+        let mut r = Run::new();
+        r.intro(Rule::Asari).feed(Seen::Outcome(Outcome::Lose), 6).wait(5).feed(h(Note::Uncounted), 5).wait(60);
+        assert!(r.of("medals").is_empty());
     }
 
     #[test]

@@ -158,7 +158,9 @@ fn measure_starter_rank() {
     let places = std::env::var("SRW_PLACES").unwrap_or_default();
     for p in list.split(';').filter(|p| !p.is_empty()) {
         let img = image::open(p).unwrap().to_rgb8();
-        let work = image::imageops::resize(&img, 1024, 576, image::imageops::FilterType::Triangle);
+        // SRW_WIDTH で照合の幅を変えて試す（既定 1024。0 なら縮めない）
+        let w: u32 = std::env::var("SRW_WIDTH").ok().and_then(|v| v.parse().ok()).unwrap_or(1024);
+        let work = if w == 0 { img.clone() } else { image::imageops::resize(&img, w, w * 9 / 16, image::imageops::FilterType::Triangle) };
         println!("{}", p.rsplit(['/', '\\']).next().unwrap());
         for id in places.split(',').filter(|s| !s.is_empty()) {
             let place = crate::templates::place(id).unwrap();
