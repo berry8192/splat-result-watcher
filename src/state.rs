@@ -515,9 +515,9 @@ impl Machine {
         std::mem::take(&mut self.notices)
     }
 
-    /// 控えるもの（今の試合と通し番号）。試合が無ければ `null` の試合を控える
+    /// 控えるもの（今の試合と通し番号と、覚えていたウデマエポイント）。試合が無ければ `null` の試合を控える
     pub fn save(&self) -> String {
-        json!({"serial": self.serial, "game": self.game}).to_string()
+        json!({"serial": self.serial, "game": self.game, "known_udemae": self.known_udemae}).to_string()
     }
 
     /// 控えから読み戻す。時間切れの決まりに当てはまる古い試合は捨てる。読み戻した試合の ID を返す
@@ -525,6 +525,10 @@ impl Machine {
         let v: Value = serde_json::from_str(saved).ok()?;
         if let Some(n) = v["serial"].as_u64() {
             self.serial = n as u32;
+        }
+        // 覚えていたウデマエポイント（起動し直しても、次の精算の増減を足せるように）
+        if let Some(k) = v["known_udemae"].as_i64() {
+            self.known_udemae = Some(k as i32);
         }
         let g: Game = serde_json::from_value(v["game"].clone()).ok()?;
         let stale = match (g.has_end(), g.settled) {
@@ -735,6 +739,9 @@ impl Machine {
                     let mut g = self.open(at, None);
                     g.outcome = o;
                     g.ended_at = Some(at);
+                    // 始まりを見ていない（紹介の見落とし・試合の途中で起動した）。受け手が試合として数えられるよう、
+                    // 結果より前に始まりを出す。試合はもう終わっているので、試合中に出さない決まりには触れない
+                    out.push(json!({"type": "battle_started", "match_id": g.id, "late": true, "at": time(at)}));
                     self.game = Some(g);
                     self.episode_fresh = false;
                 }
@@ -1319,7 +1326,10 @@ mod tests {
     fn missed_intro_starts_on_a_fresh_outcome_screen() {
         let mut r = Run::new();
         r.feed(win(), 8).wait(10).feed(header(Mode::X, Rule::Yagura, Note::None), 5);
-        assert_eq!(r.types(), ["result"]);
+        // 始まりを見ていない試合も、受け手が数えられるよう結果の前に始まりを出す（"late"。2026-10-08 から）
+        assert_eq!(r.types(), ["battle_started", "result"]);
+        assert_eq!(r.of("battle_started")[0]["late"], true);
+        assert_eq!(r.of("battle_started")[0]["match_id"], r.of("result")[0]["match_id"]);
         assert_eq!(r.of("result")[0]["rule"], "yagura");
 
         // 30 秒以内にまた映った勝敗の画面（戦績の見返し）は数えない。空けば新しい試合
@@ -1666,6 +1676,16 @@ mod tests {
         assert!(lobby.get("rule").is_none(), "ルールの欄が無いので省く");
         r.wait(30).intro(Rule::Hoko);
         assert_eq!(r.of("battle_started")[0]["mode"], "other");
+    }
+
+    #[test]
+    fn known_udemae_survives_a_restart() {
+        let mut m = Machine::new(Config::default());
+        m.set_known_udemae(271);
+        let saved = m.save();
+        let mut m2 = Machine::new(Config::default());
+        m2.restore(&saved, Utc::now());
+        assert_eq!(m2.known_udemae, Some(271));
     }
 
     #[test]

@@ -136,6 +136,9 @@ nicomment は `in_battle` の間、AI に画面を見せない（設定 `screen_
 開かれない。`other` の試合も `battle_started` / `result` は流す（試合の区切りとして。2026-10-06 から。
 それまでは `result` を出していなかった）。ナワバリは紹介で分かるので `battle_started` に `"mode":"other","rule":"turf_war"` が付く。
 `rule` が無ければ nicomment は `battle_started` のルール → `started_at` 時点のスケジュールの順で補う。
+始まりを見ていない試合（ルール紹介を見落とした・試合の途中で起動した）は、勝敗の画面を見た時点で `battle_started` に
+`"late": true` を付けて出し、その後に `result` を出す（2026-10-08 から。それまでは `battle_started` 無しで `result` だけ出していた）。
+`late` の `battle_started` は試合が終わった後に届くので、受け手は試合中の表示に使わず、`result` を数えるための始まりとして扱う。
 
 ### `power`
 ```json

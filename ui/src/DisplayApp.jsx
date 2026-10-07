@@ -17,6 +17,8 @@ export const BGS = [
   ["#00ff00", "緑（クロマキー用）"],
   ["#0000ff", "青（クロマキー用）"],
 ];
+/** ナワバリバトルの字の色（レギュラーマッチのカードの黄緑） */
+const TURF_COLOR = "#b5e61d";
 /** 集計しないモードの字の色 */
 const OTHER_COLOR = "#8a8a8a";
 /** 窓の余白（論理 px） */
@@ -217,7 +219,7 @@ export default function DisplayApp() {
         集計対象外
       </span>
     ) : (
-      shown != null && <Power shown={shown} isX={isX} isBankara={isBankara} rank={rank} estimate={estimate} size={d.font_power} color={d.power_color} />
+      shown != null && <Power shown={shown} isX={isX} isBankara={isBankara} rank={rank} estimate={mode === "bankara_open" ? null : estimate} size={d.font_power} color={d.power_color} />
     );
 
   return (
@@ -232,7 +234,7 @@ export default function DisplayApp() {
         <div className="disp-left">
           <span className="disp-head" style={{ fontSize: d.font_head, color: d.head_color }}>
             {modeName && <span style={{ color: isX ? d.x_color : isBankara ? d.bankara_color : d.head_color }}>{modeName} </span>}
-            {ruleName || (modeName ? "" : " ")}
+            {ruleName ? <span style={rule === "turf_war" ? { color: TURF_COLOR } : undefined}>{ruleName}</span> : modeName ? "" : " "}
           </span>
           {layout === "tate" && powerEl}
           {showSet && (
