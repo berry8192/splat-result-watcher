@@ -517,7 +517,7 @@ impl Machine {
 
     /// 控えるもの（今の試合と通し番号と、覚えていたウデマエポイント）。試合が無ければ `null` の試合を控える
     pub fn save(&self) -> String {
-        json!({"serial": self.serial, "game": self.game, "known_udemae": self.known_udemae}).to_string()
+        json!({"serial": self.serial, "game": self.game, "known_udemae": self.known_udemae, "lobby": self.lobby.latest, "rank": self.rank}).to_string()
     }
 
     /// 控えから読み戻す。時間切れの決まりに当てはまる古い試合は捨てる。読み戻した試合の ID を返す
@@ -529,6 +529,15 @@ impl Machine {
         // 覚えていたウデマエポイント（起動し直しても、次の精算の増減を足せるように）
         if let Some(k) = v["known_udemae"].as_i64() {
             self.known_udemae = Some(k as i32);
+        }
+        // ロビーで選んでいたモードとルール（マッチングが映らない試合のモードを補う）とランク（推定の帯）
+        if let Ok(Some(l)) = serde_json::from_value::<Option<(Mode, Option<Rule>)>>(v["lobby"].clone()) {
+            self.lobby.latest = Some(l);
+            self.lobby.first = Some(l);
+            self.lobby_sent = Some(l);
+        }
+        if let Ok(Some(r)) = serde_json::from_value::<Option<crate::rank::Rank>>(v["rank"].clone()) {
+            self.rank = Some(r);
         }
         let g: Game = serde_json::from_value(v["game"].clone()).ok()?;
         let stale = match (g.has_end(), g.settled) {
@@ -1679,13 +1688,17 @@ mod tests {
     }
 
     #[test]
-    fn known_udemae_survives_a_restart() {
-        let mut m = Machine::new(Config::default());
-        m.set_known_udemae(271);
-        let saved = m.save();
-        let mut m2 = Machine::new(Config::default());
-        m2.restore(&saved, Utc::now());
-        assert_eq!(m2.known_udemae, Some(271));
+    fn known_udemae_and_lobby_survive_a_restart() {
+        let mut r = Run::new();
+        r.m.set_known_udemae(271);
+        r.feed(Seen::Lobby { mode: Mode::BankaraOpen, rule: Some(Rule::Yagura) }, 4);
+        let saved = r.m.save();
+        let mut r2 = Run::new();
+        r2.m.restore(&saved, Utc::now());
+        assert_eq!(r2.m.known_udemae, Some(271));
+        // 起動し直した直後に始まった試合も、ロビーの選択でモードが分かる
+        r2.intro(Rule::Yagura);
+        assert_eq!(r2.of("battle_started")[0]["mode"], "bankara_open");
     }
 
     #[test]

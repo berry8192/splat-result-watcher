@@ -9,6 +9,12 @@ import Advice from "./Advice.jsx";
 const MODE_NAMES = { x: "Xマッチ", bankara_challenge: "バンカラ チャレンジ", bankara_open: "バンカラ オープン", bankara: "バンカラ", other: "その他" };
 const RULE_NAMES = { area: "ガチエリア", yagura: "ガチヤグラ", hoko: "ガチホコ", asari: "ガチアサリ", turf_war: "ナワバリバトル" };
 const STEPS = [25, 50, 75];
+/** オープンの 1 試合ぶんの増減（Ver.10.0.0 から。勝ちはどの帯も +20、負けは帯ごと） */
+const OPEN_WIN = 20;
+function openLose(rank) {
+  if (!rank || rank.startsWith("S+")) return 13;
+  return { S: 10, A: 8, B: 5, C: 3 }[rank[0]] ?? 13;
+}
 
 export default function ManualPage() {
   const [s, setS] = useState(null);
@@ -98,6 +104,18 @@ export default function ManualPage() {
           </button>
         ))}
       </div>
+
+      {!isX && (
+        <div className="manual-row">
+          <span>オープン{cur.rank ? `（${cur.rank}）` : "（ランク不明のため S+ として）"}</span>
+          <button disabled={value == null} onClick={() => setValue(value + OPEN_WIN)}>
+            勝ち +{OPEN_WIN}
+          </button>
+          <button disabled={value == null} onClick={() => setValue(value - openLose(cur.rank))}>
+            負け −{openLose(cur.rank)}
+          </button>
+        </div>
+      )}
 
       <h3>セットの勝敗</h3>
       <div className="manual-row">
