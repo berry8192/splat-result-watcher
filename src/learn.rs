@@ -36,8 +36,6 @@ const MIN_KNOWN: usize = 2;
 /// （同じ字体の違う字どうしは 0.79 以下、字体をまたいだ同じ字は 0.80〜0.95 だった）
 const CONFLICT: f64 = 0.80;
 const MAX_AUTO: usize = 3;
-/// 同じ字の形どうしは、これ以上重なること（精算の前後の値で同じ字が出たとき）
-const SAME_SHAPE: f64 = 0.6;
 
 const DIGIT_POOLS: [Pool; 5] = [Pool::Digit, Pool::DigitSmall, Pool::DigitGauge, Pool::DigitTotal, Pool::DigitMenu];
 
@@ -78,9 +76,6 @@ struct Track {
     settled: Vec<Settled>,
     /// 最後に読めた値（落ち着いていなくても）。数え上がった後の値は 1 回しか読めないことがある
     raw: Option<Settled>,
-    /// この画面で読めた形（古い順、推測が違うものごと）。精算の前後の値を、後から計算の答えで埋める
-    /// （OBS からは 1 秒に 1 枚なので、前の値は 1〜2 枚しか映らず、続けて同じに読めるとは限らない）
-    shown: Vec<GlyphRead>,
 }
 
 #[derive(Default)]
@@ -90,8 +85,6 @@ pub struct Learner {
     given: Vec<(Pool, Vec<u8>)>,
     battle: u64,
     in_intro: bool,
-    /// 状態が出した精算の前後の値（直前の値 + 読めた増減）と時刻。ゲージの下の数字をこれで埋める
-    points: Option<(i64, i64, DateTime<Utc>)>,
 }
 
 /// 「2194.6」「+94.6」を 0.1 単位の整数に
@@ -132,7 +125,6 @@ impl Learner {
             let gap = tr.last.map_or(i64::MAX, |l| (at - l).num_seconds());
             if gap > EPISODE_GAP {
                 tr.settled.clear();
-                tr.shown.clear();
             }
             // 推測まで同じなら同じ絵（推測は切り出した形だけで決まる）
             if gap > RUN_GAP || tr.text != read.guess {
@@ -141,9 +133,6 @@ impl Learner {
             }
             tr.run += 1;
             tr.last = Some(at);
-            if tr.run == 1 && !read.chars.is_empty() && tr.shown.last().is_none_or(|r| r.guess != read.guess) {
-                tr.shown.push(read.clone());
-            }
             if !read.chars.is_empty() {
                 tr.raw = Some(Settled { at, read: read.clone(), battle });
             }
@@ -169,55 +158,10 @@ impl Learner {
                 }
             }
         }
-        out.extend(self.fill_points(at, t));
         out.retain(|l| !self.given.iter().any(|(p, px)| *p == l.pool && *px == l.patch.px));
         self.given.extend(out.iter().map(|l| (l.pool, l.patch.px.clone())));
         let over = self.given.len().saturating_sub(64);
         self.given.drain(..over);
-        out
-    }
-
-    /// 状態が出した精算の前後の値を受け取る（`power` の `kind: "udemae"`）
-    pub fn points(&mut self, at: DateTime<Utc>, before: i64, after: i64) {
-        self.points = Some((before, after, at));
-    }
-
-    /// 精算の前後の値で、ゲージの下の数字（まだ読めない字）を埋める。前後の両方が揃ったときだけ、
-    /// 同じ字は同じ形・違う字は違う形であることを確かめてから
-    fn fill_points(&mut self, at: DateTime<Utc>, t: &Templates) -> Vec<Learned> {
-        let Some((before, after, since)) = self.points else { return Vec::new() };
-        if at - since > Duration::seconds(EPISODE_GAP) {
-            self.points = None;
-            return Vec::new();
-        }
-        let shown = self.tracks.get("udemae_value").map_or(&[][..], |t| t.shown.as_slice());
-        let (b, a) = (before.to_string(), after.to_string());
-        let width = |r: &GlyphRead| r.glyphs.len();
-        // 後の値は最後の形、前の値はその形が初めて出る直前の形
-        let Some(ra) = shown.iter().rev().find(|r| width(r) == a.len()) else { return Vec::new() };
-        let j = shown.iter().position(|r| r.guess == ra.guess).unwrap();
-        let Some(rb) = shown[..j].iter().rev().find(|r| width(r) == b.len()) else { return Vec::new() };
-        self.points = None;
-        let shapes: Vec<(char, &Patch)> = b
-            .chars()
-            .zip(&rb.glyphs)
-            .chain(a.chars().zip(&ra.glyphs))
-            .filter_map(|(c, g)| match g {
-                Glyph::Shape(p) => Some((c, p)),
-                _ => None,
-            })
-            .collect();
-        for (i, (c1, p1)) in shapes.iter().enumerate() {
-            for (c2, p2) in &shapes[i + 1..] {
-                let v = matching::glyph_iou(p1, p2);
-                if (c1 == c2 && v < SAME_SHAPE) || (c1 != c2 && v >= CONFLICT) {
-                    return Vec::new();
-                }
-            }
-        }
-        let why = format!("精算の前後 {b} → {after}（直前の値と読めた増減から）");
-        let mut out = fill("udemae_value", rb, &b, &why, Verified::Points, t);
-        out.extend(fill("udemae_value", ra, &a, &why, Verified::Points, t));
         out
     }
 
@@ -315,9 +259,6 @@ enum Verified {
     Sum,
     /// 確かな読みから出した答え（読めない字は少しだけ、読めた字が答えと合うこと）
     Few,
-    /// 状態が直前の値と増減から出した精算の前後の値。手がかりの数字の推測は合わない字体なので見ない
-    /// （前後の 2 つの読みで、同じ字は同じ形・違う字は違う形であることを確かめてある）
-    Points,
 }
 
 /// `read` の読めない字を `expected` で埋める。確度の条件を満たさなければ空
@@ -335,7 +276,7 @@ fn fill(place_id: &str, read: &GlyphRead, expected: &str, why: &str, how: Verifi
     }
     // 手がかりの数字の推測が答えと食い違う字があれば、答えか切り出しを疑う
     let guessed: Vec<char> = read.guess.chars().collect();
-    if how != Verified::Points && guessed.len() == want.len() && unknown.iter().any(|&i| guessed[i] != '?' && guessed[i] != want[i]) {
+    if guessed.len() == want.len() && unknown.iter().any(|&i| guessed[i] != '?' && guessed[i] != want[i]) {
         return Vec::new();
     }
     if (0..got.len()).any(|i| got[i] != '?' && got[i] != want[i]) {
@@ -871,27 +812,5 @@ mod from_nothing {
             at += Duration::seconds(2);
         }
         let _ = std::fs::remove_dir_all(&dir);
-    }
-}
-
-/// 録画の精算の画面に、状態が出す前後の値を渡して、ゲージの数字を覚えるか試す
-/// （`SRW_IMGS=a.jpg;b.jpg SRW_POINTS=284,271 cargo test --release -- --ignored learn_points_from_frames --nocapture`）
-#[test]
-#[ignore]
-fn learn_points_from_frames() {
-    let Ok(list) = std::env::var("SRW_IMGS") else { return };
-    let pts: Vec<i64> = std::env::var("SRW_POINTS").unwrap().split(',').map(|v| v.parse().unwrap()).collect();
-    let rec = crate::recognize::Recognizer::new(Templates::load(&Templates::default_dir()).unwrap());
-    let mut l = Learner::default();
-    let t0 = Utc::now();
-    for (i, p) in list.split(';').filter(|p| !p.is_empty()).enumerate() {
-        let at = t0 + Duration::seconds(i as i64);
-        let r = rec.recognize(&image::open(p).unwrap().to_rgb8());
-        if i == 2 {
-            l.points(at, pts[0], pts[1]);
-        }
-        let read = r.numbers.iter().find(|(id, _)| *id == "udemae_value").map(|(_, r)| (r.text.clone(), r.guess.clone()));
-        let got = l.feed(at, &r.seen, &r.numbers, rec.templates());
-        println!("{i} {read:?} → {:?}", got.iter().map(|g| (g.pool, g.label.clone())).collect::<Vec<_>>());
     }
 }
