@@ -17,6 +17,8 @@ export const BGS = [
   ["#00ff00", "緑（クロマキー用）"],
   ["#0000ff", "青（クロマキー用）"],
 ];
+/** 集計しないモードの字の色 */
+const OTHER_COLOR = "#8a8a8a";
 /** 窓の余白（論理 px） */
 const PAD = { x: 28, y: 22 };
 const DEFAULT_DISPLAY = {
@@ -45,9 +47,16 @@ export function pick(events) {
   let estimate; // 今のチャレンジがこのまま終わったら入るポイント（精算の後は無し）
   let set = null;
   let ended = null; // セットを終わらせたパワーの変動（match_id）と、その試合の勝敗
+  let modeDecided = false; // 一番新しい試合・ロビー・メニューで決める（モードの分からない試合が始まったら、前のモードは見せない）
   for (const e of events) {
-    if (mode == null && (e.type === "result" || e.type === "battle_started" || e.type === "lobby") && e.mode) mode = e.mode;
-    if (mode == null && e.type === "observed") mode = e.kind === "x" ? "x" : "bankara";
+    if (!modeDecided && (e.type === "result" || e.type === "battle_started" || e.type === "lobby")) {
+      mode = e.mode ?? null;
+      modeDecided = true;
+    }
+    if (!modeDecided && e.type === "observed") {
+      mode = e.kind === "x" ? "x" : "bankara";
+      modeDecided = true;
+    }
     if (rule == null && e.rule && (e.type === "result" || e.type === "battle_started" || e.type === "observed" || e.type === "lobby")) rule = e.rule;
     if (estimate === undefined && e.type === "estimate" && e.kind === "udemae") estimate = e.gain;
     if (estimate === undefined && e.type === "power" && e.kind === "udemae") estimate = null;
@@ -201,7 +210,15 @@ export default function DisplayApp() {
   const setShown = set?.final && rolling ? set.final : set;
   const showSet = setShown && mode !== "bankara_open" && mode !== "other";
   const note = !s ? "" : !s.source ? "N Air または OBS が見つかりません" : events.length === 0 ? "まだ試合を認識していません" : "";
-  const powerEl = shown != null && <Power shown={shown} isX={isX} isBankara={isBankara} rank={rank} estimate={estimate} size={d.font_power} color={d.power_color} />;
+  // ナワバリ・イベントマッチなど（other）は数えないことを、パワーの場所に灰色で見せる（モードを認識できている印）
+  const powerEl =
+    mode === "other" ? (
+      <span className="disp-power" style={{ fontSize: Math.round(d.font_power * 0.5), color: OTHER_COLOR }}>
+        集計対象外
+      </span>
+    ) : (
+      shown != null && <Power shown={shown} isX={isX} isBankara={isBankara} rank={rank} estimate={estimate} size={d.font_power} color={d.power_color} />
+    );
 
   return (
     <div
