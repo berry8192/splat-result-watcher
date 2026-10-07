@@ -121,6 +121,8 @@ struct Shared {
     reset_game: AtomicBool,
     /// 手で直したウデマエポイント（次の精算・参加費の元にする）
     manual_udemae: Mutex<Option<i32>>,
+    /// 同じ値を、メニューの数字を覚える答えにも使う
+    manual_learn: Mutex<Option<i32>>,
     snap: Mutex<Snapshot>,
     events: Mutex<VecDeque<Value>>,
     log: Mutex<VecDeque<String>>,
@@ -177,6 +179,7 @@ impl Engine {
             record: AtomicBool::new(cfg.record),
             reset_game: AtomicBool::new(false),
             manual_udemae: Mutex::new(None),
+            manual_learn: Mutex::new(None),
             snap: Mutex::new(Snapshot {
                 stage: "idle".into(),
                 addr: format!("ws://{}/events", cfg.addr),
@@ -251,6 +254,7 @@ impl Engine {
         if ev["kind"] == "udemae" {
             if let Some(v) = ev["value"].as_i64() {
                 *self.shared.manual_udemae.lock().unwrap() = Some(v as i32);
+                *self.shared.manual_learn.lock().unwrap() = Some(v as i32);
             }
         }
         ev["at"] = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true).into();
@@ -501,6 +505,21 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
         }
         // 読めない字を、ほかの確かな数字から埋められたら見本に足す（確度の高いものだけ。learn.rs）
         // 形と色で見分けた見出しも、別の画面で確かめられたら見本に足す
+        let events = machine.feed(Utc::now(), reading.seen.clone());
+        // 確かなウデマエポイント（精算の計算・参加費の後の値）で、その後のメニュー・マッチングの数字を覚える
+        for ev in &events {
+            let v = match (ev["type"].as_str(), ev["kind"].as_str()) {
+                (Some("power"), Some("udemae")) => ev["after"].as_i64(),
+                (Some("observed"), Some("udemae")) if ev.get("wins").is_none() && ev.get("rank").is_none() => ev["value"].as_i64(),
+                _ => None,
+            };
+            if let Some(v) = v {
+                learner.known_udemae(Utc::now(), v);
+            }
+        }
+        if let Some(v) = s.manual_learn.lock().unwrap().take() {
+            learner.known_udemae(Utc::now(), v as i64);
+        }
         let learned = {
             let r = s.recognizer.read().unwrap();
             let now = Utc::now();
@@ -520,7 +539,6 @@ fn capture_loop(s: &Shared, cfg: &EngineConfig) {
                 learned_notes.push(line);
             }
         }
-        let events = machine.feed(Utc::now(), reading.seen.clone());
         if let Some(h) = hits.as_mut() {
             h.record(machine.stage().as_str(), &reading, &learned_notes, &events, frame_img.as_ref());
         }

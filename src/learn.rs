@@ -4,7 +4,9 @@
 //! 埋め方:
 //! - 同じ画面の中の計算: ウデマエ「動く前 + TOTAL（オープンは 1 試合ぶんの増減） = 動いた後」、X パワー「動く前 + 増減 = 動いた後」
 //! - 同じ値: 試合後の値（X パワー・ウデマエ・昇格の 300p）と、その後ロビーのメニューに出る値
-//!   （間にルール紹介が無く、5 分以内。X は同じルールの時間帯のうち）
+//!   （間にルール紹介が無く、5 分以内。X は同じルールの時間帯のうち）。試合後の値が見本で読めていれば、
+//!   メニューの字がまだ 1 つも読めなくても埋める（同じ数字の中で同じ字は同じ形・違う字は違う形であること）
+//! - 同じ値: 状態が出した確かなウデマエポイント（精算の計算・参加費・手動操作）と、その後のメニュー・マッチングの値
 //!
 //! 確度の条件（どれか外れたら足さない）:
 //! - どちらの数字も 3 回続けて同じ読み（動いている途中の数字を使わない）
@@ -36,6 +38,8 @@ const MIN_KNOWN: usize = 2;
 /// （同じ字体の違う字どうしは 0.79 以下、字体をまたいだ同じ字は 0.80〜0.95 だった）
 const CONFLICT: f64 = 0.80;
 const MAX_AUTO: usize = 3;
+/// 同じ字の形どうしは、これ以上重なること（確かな値で、まだ 1 字も読めない数字を埋めるとき）
+const SAME_SHAPE: f64 = 0.6;
 
 const DIGIT_POOLS: [Pool; 5] = [Pool::Digit, Pool::DigitSmall, Pool::DigitGauge, Pool::DigitTotal, Pool::DigitMenu];
 
@@ -85,6 +89,9 @@ pub struct Learner {
     given: Vec<(Pool, Vec<u8>)>,
     battle: u64,
     in_intro: bool,
+    /// 状態が出した確かなウデマエポイント（精算の計算・参加費・手動操作）と時刻・何試合目の後か。
+    /// その後のメニュー・マッチングの数字をこれで埋める
+    known_udemae: Option<(i64, DateTime<Utc>, u64)>,
 }
 
 /// 「2194.6」「+94.6」を 0.1 単位の整数に
@@ -165,6 +172,11 @@ impl Learner {
         out
     }
 
+    /// 状態が出した確かなウデマエポイントを受け取る（`power` の `after`・参加費の後の値・手動操作の値）
+    pub fn known_udemae(&mut self, at: DateTime<Utc>, value: i64) {
+        self.known_udemae = Some((value, at, self.battle));
+    }
+
     fn settled(&self, place: &str) -> &[Settled] {
         self.tracks.get(place).map_or(&[], |t| t.settled.as_slice())
     }
@@ -228,6 +240,16 @@ impl Learner {
             }
         }
 
+        // 確かなウデマエポイント = その後（次の試合まで）のメニュー・マッチングの値
+        if let (Some((v, since, battle)), "menu_udemae_value" | "matching_udemae_value") = (self.known_udemae, place) {
+            if let Some(m) = self.settled(place).last() {
+                if m.battle == battle && m.at >= since && m.at - since <= Duration::seconds(SAME_VALUE_WITHIN) && !complete(&m.read) {
+                    let why = format!("確かなウデマエポイント {v}（精算の計算・参加費・手動操作）と、その後の {place} は同じ値");
+                    out.extend(fill(place, &m.read, &v.to_string(), &why, Verified::Known, t));
+                }
+            }
+        }
+
         // 試合後の値 = その後のメニューの値
         for (result, menu, by_slot) in SAME_VALUE {
             if place != result && place != menu {
@@ -243,7 +265,12 @@ impl Learner {
             }
             let why = |x: &str, v: &str| format!("試合後の {result} と、その後のメニューの {menu} は同じ値 {v}（{x}を埋めた）");
             match (complete(&r.read), complete(&m.read)) {
-                (true, false) => out.extend(fill(menu, &m.read, &r.read.text, &why("メニュー", &r.read.text), Verified::Few, t)),
+                // 試合後の値は見本で読めた確かなもの。メニューの字がまだ読めなくても埋める（読めた字があれば推測も確かめる）
+                (true, false) => {
+                    let known = m.read.text.chars().filter(|c| c.is_ascii_digit()).count();
+                    let how = if known >= MIN_KNOWN { Verified::Few } else { Verified::Known };
+                    out.extend(fill(menu, &m.read, &r.read.text, &why("メニュー", &r.read.text), how, t))
+                }
                 (false, true) => out.extend(fill(result, &r.read, &m.read.text, &why("試合後", &m.read.text), Verified::Few, t)),
                 _ => {}
             }
@@ -259,6 +286,9 @@ enum Verified {
     Sum,
     /// 確かな読みから出した答え（読めない字は少しだけ、読めた字が答えと合うこと）
     Few,
+    /// 確かな値（見本で読めた試合後の値・状態が出したウデマエポイント）と同じはずの数字。読めない字がいくつあってもよいが、
+    /// 同じ数字の中で同じ字は同じ形・違う字は違う形であること。手がかりの数字の推測は見ない（メニューの字体には合いにくい）
+    Known,
 }
 
 /// `read` の読めない字を `expected` で埋める。確度の条件を満たさなければ空
@@ -276,11 +306,29 @@ fn fill(place_id: &str, read: &GlyphRead, expected: &str, why: &str, how: Verifi
     }
     // 手がかりの数字の推測が答えと食い違う字があれば、答えか切り出しを疑う
     let guessed: Vec<char> = read.guess.chars().collect();
-    if guessed.len() == want.len() && unknown.iter().any(|&i| guessed[i] != '?' && guessed[i] != want[i]) {
+    if how != Verified::Known && guessed.len() == want.len() && unknown.iter().any(|&i| guessed[i] != '?' && guessed[i] != want[i]) {
         return Vec::new();
     }
     if (0..got.len()).any(|i| got[i] != '?' && got[i] != want[i]) {
         return Vec::new();
+    }
+    if how == Verified::Known {
+        let shapes: Vec<(char, &Patch)> = want
+            .iter()
+            .zip(&read.glyphs)
+            .filter_map(|(c, g)| match g {
+                Glyph::Shape(p) => Some((*c, p)),
+                _ => None,
+            })
+            .collect();
+        for (i, (c1, p1)) in shapes.iter().enumerate() {
+            for (c2, p2) in &shapes[i + 1..] {
+                let v = matching::glyph_iou(p1, p2);
+                if (c1 == c2 && v < SAME_SHAPE) || (c1 != c2 && v >= CONFLICT) {
+                    return Vec::new();
+                }
+            }
+        }
     }
     let mut out = Vec::new();
     for i in unknown {
@@ -597,10 +645,34 @@ mod tests {
     }
 
     #[test]
-    fn too_many_unknown_digits_are_not_filled() {
+    fn a_menu_without_known_digits_is_filled_from_a_certain_value() {
+        // 試合後の値が見本で読めていれば、メニューの字が読めなくても埋める（2026-10-07 から。前は 2 字以上読めていることが要った）
         let mut r = Run::new();
         r.feed(Seen::Unknown, &[("udemae_value", rd("1051", "1051"))], 4).wait(30);
         r.feed(Seen::Unknown, &[("menu_udemae_value", rd("1???", "1051"))], 4);
+        assert_eq!(r.labels(), vec![(Pool::DigitMenu, "0".into()), (Pool::DigitMenu, "5".into()), (Pool::DigitMenu, "1".into())]);
+    }
+
+    #[test]
+    fn the_same_digit_must_have_the_same_shape() {
+        // 答えでは 1 と 1 なのに形が違う（切り出しか答えがずれている）なら埋めない
+        let mut r = Run::new();
+        r.feed(Seen::Unknown, &[("udemae_value", rd("1051", "1051"))], 4).wait(30);
+        r.feed(Seen::Unknown, &[("menu_udemae_value", rd("1???", "1057"))], 4);
+        assert!(r.got.is_empty());
+    }
+
+    #[test]
+    fn a_known_udemae_fills_the_menu_after_it() {
+        let mut r = Run::new();
+        r.l.known_udemae(r.at, 271);
+        r.feed(Seen::Unknown, &[("menu_udemae_value", rd("???", "271"))], 4);
+        assert_eq!(r.labels().len(), 3);
+        // 試合を挟んだ後のメニューには使わない
+        let mut r = Run::new();
+        r.l.known_udemae(r.at, 271);
+        r.feed(Seen::RuleIntro(crate::state::Rule::Area), &[], 2).wait(400);
+        r.feed(Seen::Unknown, &[("menu_udemae_value", rd("???", "258"))], 4);
         assert!(r.got.is_empty());
     }
 
@@ -812,5 +884,33 @@ mod from_nothing {
             at += Duration::seconds(2);
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// 録画を読み取り → 状態 → 覚える の順に通し、確かな値からメニューの数字を覚えるか試す
+/// （`SRW_REC=samples/keep/20261006-043707 SRW_KNOWN=284 cargo test --release -- --ignored learn_from_record --nocapture`）
+#[test]
+#[ignore]
+fn learn_from_record() {
+    let Ok(dir) = std::env::var("SRW_REC") else { return };
+    let mut files: Vec<_> = std::fs::read_dir(dir).unwrap().filter_map(|e| e.ok()).map(|e| (DateTime::<Utc>::from(e.metadata().unwrap().modified().unwrap()), e.path())).collect();
+    files.sort();
+    let rec = crate::recognize::Recognizer::new(Templates::load(&Templates::default_dir()).unwrap());
+    let mut m = crate::state::Machine::new(crate::state::Config::default());
+    if let Some(v) = std::env::var("SRW_KNOWN").ok().and_then(|v| v.parse().ok()) {
+        m.set_known_udemae(v);
+    }
+    let mut l = Learner::default();
+    for (at, p) in files {
+        let r = rec.recognize(&image::open(&p).unwrap().to_rgb8());
+        for ev in m.feed(at, r.seen.clone()) {
+            if let (Some("power"), Some("udemae"), Some(v)) = (ev["type"].as_str(), ev["kind"].as_str(), ev["after"].as_i64()) {
+                println!("{} power → {v}", p.file_name().unwrap().to_string_lossy());
+                l.known_udemae(at, v);
+            }
+        }
+        for g in l.feed(at, &r.seen, &r.numbers, rec.templates()) {
+            println!("{} learned {:?} {} : {}", p.file_name().unwrap().to_string_lossy(), g.pool, g.label, g.why);
+        }
     }
 }
