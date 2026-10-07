@@ -125,9 +125,9 @@ pub enum Seen {
     UdemaeReset(i32),
     /// 試合と結び付かない、今見えた自分の値（`wins` / `losses` は進行が見えたときだけ）。
     /// `lobby` はメニューで選んでいるモードとルール（読めたときだけ）
-    Observed { what: Observed, wins: Option<u8>, losses: Option<u8>, lobby: Option<(Mode, Rule)> },
+    Observed { what: Observed, wins: Option<u8>, losses: Option<u8>, lobby: Option<(Mode, Option<Rule>)> },
     /// ロビーのメニューで選んでいるモードとルール（値の出ないオープン・ナワバリや、値がまだ読めないとき）
-    Lobby { mode: Mode, rule: Rule },
+    Lobby { mode: Mode, rule: Option<Rule> },
     /// 進行の「WIN LOSE n - m」。`stamps` は WIN の判子の数（読めたときだけ）
     /// `mode` はパネルの左上の黄色い札（「チャレンジ」「昇格戦」）で分かるモード（札があればバンカラ、無ければ X）
     Progress { wins: u8, losses: u8, stamps: Option<u8>, mode: Option<Mode> },
@@ -383,8 +383,8 @@ pub struct Machine {
     observed: Settle<ObservedKey>,
     observed_sent: Option<ObservedKey>,
     /// メニューで選んでいるモードとルールと、最後に出したもの（試合を始めると出し直せるよう忘れる）
-    lobby: Settle<(Mode, Rule)>,
-    lobby_sent: Option<(Mode, Rule)>,
+    lobby: Settle<(Mode, Option<Rule>)>,
+    lobby_sent: Option<(Mode, Option<Rule>)>,
     /// 勝敗の画面が映っている一続き（始まり, 最後に見た時刻）と、それが久しぶりに映ったものか
     episode: Option<(DateTime<Utc>, DateTime<Utc>)>,
     episode_fresh: bool,
@@ -651,7 +651,12 @@ impl Machine {
         };
         if self.lobby.push(lb) && !in_battle && self.lobby.latest != self.lobby_sent {
             let (mode, rule) = self.lobby.latest.unwrap();
-            out.push(json!({"type": "lobby", "mode": mode.as_str(), "rule": rule.as_str(), "at": time(at)}));
+            let mut ev = json!({"type": "lobby", "mode": mode.as_str(), "at": time(at)});
+            // プライベートマッチはルールの欄が無い
+            if let Some(r) = rule {
+                ev["rule"] = r.as_str().into();
+            }
+            out.push(ev);
             self.lobby_sent = self.lobby.latest;
         }
 
@@ -688,7 +693,8 @@ impl Machine {
                     .filter(|(_, t)| at - *t <= Duration::seconds(MATCHING_FRESH))
                     .map(|(m, _)| m)
                     // マッチングが映らなかった（オープンなど）ときは、メニューで選んでいたモード（ルールが同じときだけ）
-                    .or(self.lobby.latest.filter(|(_, lr)| Some(*lr) == r && *lr != Rule::TurfWar).map(|(m, _)| m));
+                    // プライベートマッチ（ルールの欄が無い）を選んでいたら、どのルールでも other
+                    .or(self.lobby.latest.filter(|(m, lr)| (*lr == r && *lr != Some(Rule::TurfWar)) || (*m == Mode::Other && lr.is_none())).map(|(m, _)| m));
                 // 試合の後にメニューへ戻ったら、同じ選択でも出し直す
                 self.lobby_sent = None;
                 // 参加費を払ってすぐ試合の一覧に覆われ、マッチングが落ち着かないまま始まることもある（2026-10-06 の録画）。
@@ -1636,7 +1642,7 @@ mod tests {
     fn notices_ask_for_points_and_tell_a_mismatch() {
         let mut r = Run::new();
         assert!(!r.m.needs_udemae(), "バンカラの画面を見るまでは聞かない");
-        r.feed(Seen::Lobby { mode: Mode::BankaraOpen, rule: Rule::Asari }, 4);
+        r.feed(Seen::Lobby { mode: Mode::BankaraOpen, rule: Some(Rule::Asari) }, 4);
         assert!(r.m.needs_udemae());
         r.m.set_known_udemae(300);
         assert!(!r.m.needs_udemae());
@@ -1649,6 +1655,17 @@ mod tests {
         assert_eq!(r.m.known_udemae, Some(287));
         r.feed(Seen::Unknown, 2).feed(mv(287), 4);
         assert!(r.m.take_notices().is_empty(), "合っていれば知らせない");
+    }
+
+    #[test]
+    fn a_private_match_selected_in_the_lobby_makes_the_battle_other() {
+        let mut r = Run::new();
+        r.feed(Seen::Lobby { mode: Mode::Other, rule: None }, 4);
+        let lobby = r.of("lobby")[0];
+        assert_eq!(lobby["mode"], "other");
+        assert!(lobby.get("rule").is_none(), "ルールの欄が無いので省く");
+        r.wait(30).intro(Rule::Hoko);
+        assert_eq!(r.of("battle_started")[0]["mode"], "other");
     }
 
     #[test]
@@ -1687,7 +1704,7 @@ mod tests {
     #[test]
     fn lobby_is_sent_when_the_selection_changes_and_fills_the_mode_of_the_next_battle() {
         let mut r = Run::new();
-        let open = Seen::Lobby { mode: Mode::BankaraOpen, rule: Rule::Asari };
+        let open = Seen::Lobby { mode: Mode::BankaraOpen, rule: Some(Rule::Asari) };
         r.feed(open.clone(), 4).feed(Seen::Unknown, 2).feed(open.clone(), 4);
         let lb = r.of("lobby");
         assert_eq!(lb.len(), 1);

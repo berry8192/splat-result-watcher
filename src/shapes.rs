@@ -812,8 +812,16 @@ fn menu_panel(img: &RgbImage) -> bool {
 }
 
 /// ロビーのメニューで選んでいるモードとルール。カードの色とルール名が両方決まったときだけ
-/// （ルール名の欄がメニューの手がかりを兼ねる）。イベントなど、ほかの色のカードは None
-pub fn menu_selection(img: &RgbImage) -> Option<(Mode, Rule)> {
+/// （ルール名の欄がメニューの手がかりを兼ねる）。プライベートマッチはルール無しの other。イベントなど、ほかの色のカードは None
+pub fn menu_selection(img: &RgbImage) -> Option<(Mode, Option<Rule>)> {
+    // プライベートマッチ: 紫のカード。右にルールの欄は無く、暗いパネルに紫の字の説明（「ルール/ステージ/チームを 自由に設定して…」）。
+    // 2026-10-08 の録画で カード 0.82、パネルの暗い所 0.76、紫の字 0.10
+    if ratio(img, MENU_CARD, private_purple) >= MENU_CARD_MIN
+        && ratio(img, MENU_PANEL, neutral_dark) >= MENU_PANEL_DARK
+        && (0.03..=0.3).contains(&ratio(img, PRIVATE_TEXT, private_text))
+    {
+        return Some((Mode::Other, None));
+    }
     if !menu_panel(img) {
         return None;
     }
@@ -832,8 +840,21 @@ pub fn menu_selection(img: &RgbImage) -> Option<(Mode, Rule)> {
     } else {
         return None;
     };
-    Some((mode, menu_rule(img, mode == Mode::Other)?))
+    Some((mode, Some(menu_rule(img, mode == Mode::Other)?)))
 }
+
+/// プライベートマッチのカードの紫（188, 1, 254 ほど）
+fn private_purple([r, g, b]: [u8; 3]) -> bool {
+    b >= 180 && r >= 100 && g < 90
+}
+
+/// プライベートマッチの右のパネルの説明の字（赤紫）
+fn private_text([r, g, b]: [u8; 3]) -> bool {
+    r >= 180 && b >= 150 && g < 110
+}
+
+/// プライベートマッチの右のパネルの説明の行
+const PRIVATE_TEXT: Roi = Roi::new(1080, 540, 300, 130);
 
 /// メニューの決まりごとで測った値（`SRW_IMGS=a.png;b.jpg cargo test --release -- --ignored measure_menu --nocapture`）
 #[test]
