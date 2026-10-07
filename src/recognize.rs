@@ -768,3 +768,73 @@ mod with_samples {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// 画像を読んで、見えたものを並べる（`SRW_IMGS=a.jpg;b.png cargo test --release -- --ignored see_imgs --nocapture`）
+#[test]
+#[ignore]
+fn see_imgs() {
+    let rec = Recognizer::new(Templates::load(&Templates::default_dir()).unwrap());
+    for p in std::env::var("SRW_IMGS").unwrap_or_default().split(';').filter(|p| !p.is_empty()) {
+        let r = rec.recognize(&image::open(p).unwrap().to_rgb8());
+        println!("{}  {:?}", p.rsplit(['/', '\\']).next().unwrap(), r.seen);
+    }
+}
+
+/// 2026-10-06 の録画と検出ログから残した見本（バンカラの精算・表彰・メニュー・マッチング。N Air の縁ありと OBS の全画面の両方）を、
+/// 決めた読みどおりに読めるか（手元の見本を使う。`cargo test --release -- --include-ignored`）
+#[test]
+#[ignore]
+fn samples_of_20261006() {
+    let rec = Recognizer::new(Templates::load(&Templates::default_dir()).unwrap());
+    let dir = crate::samples_dir().join("snaps");
+    let want = [
+        ("20261006-000920", "UdemaeScreen { mode: Some(BankaraOpen), total: Some(-13) }"),
+        ("20261006-002816", "Header { mode: BankaraChallenge, rule: Some(Asari), note: None, medals: Some((1, 2)) }"),
+        ("20261006-002819", "UdemaeScreen { mode: Some(BankaraChallenge), total: Some(80) }"),
+        ("20261006-003837", "Header { mode: BankaraChallenge, rule: Some(Area), note: None, medals: Some((1, 2)) }"),
+        ("20261006-003841", "UdemaeScreen { mode: Some(BankaraOpen), total: Some(20) }"),
+        ("20261006-005319", "medals: Some((2, 1))"),
+        ("20261006-010512", "medals: Some((3, 0))"),
+        ("20261006-010515", "Progress { wins: 1, losses: 1, stamps: Some(1), mode: Some(BankaraChallenge) }"),
+        ("20261006-013036", "Header { mode: X, rule: Some(Area), note: None, medals: Some((0, 1)) }"),
+        ("20261006-043708", "rank: Some(Rank { letter: 'S', modifier: 1, num: Some(1) }) }, wins: Some(1), losses: Some(2), lobby: Some((BankaraChallenge, Area))"),
+        ("20261006-044543", "Matching(BankaraOpen)"),
+        ("20261006-044843", "medals: Some((0, 2))"),
+        ("20261006-044847_オープンの精算 LOSE", "UdemaeScreen { mode: Some(BankaraOpen), total: Some(-13) }"),
+        ("20261006-044905", "lobby: Some((BankaraOpen, Asari))"),
+        ("20261006-045416", "medals: Some((0, 1))"),
+        ("20261006-045420", "UdemaeScreen { mode: Some(BankaraOpen), total: Some(-13) }"),
+        ("20261006-045455", "Lobby { mode: BankaraChallenge, rule: Area }"),
+        ("20261006-045502", "MatchingValue { mode: BankaraChallenge, what: Udemae { value: Some(258)"),
+    ];
+    let files: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())).collect();
+    let mut bad = Vec::new();
+    for (key, part) in want {
+        let p = files.iter().find(|p| p.file_name().unwrap().to_string_lossy().starts_with(key)).unwrap_or_else(|| panic!("見本 {key} が無い"));
+        let seen = format!("{:?}", rec.recognize(&image::open(p).unwrap().to_rgb8()).seen);
+        if !seen.contains(part) {
+            bad.push(format!("{key}: {seen}"));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// 攻略サイトのメニューの画像（samples/snaps/web。ファイル名の先頭がランク）のランクを読めるか
+#[test]
+#[ignore]
+fn ranks_of_web_menus() {
+    let dir = crate::samples_dir().join("snaps").join("web");
+    let mut n = 0;
+    for p in std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())) {
+        let name = p.file_name().unwrap().to_string_lossy().to_string();
+        if !name.ends_with(".png") || name.starts_with("街_") {
+            continue;
+        }
+        let want = name.split('_').next().unwrap();
+        let work = templates::to_work(&image::open(&p).unwrap().to_rgb8());
+        let got = crate::rank::read_menu(&work, shapes::rank_letter, |_| None).map(|r| r.to_string());
+        assert_eq!(got.as_deref(), Some(want), "{name}");
+        n += 1;
+    }
+    assert!(n >= 9, "画像が足りない（{n} 枚）");
+}

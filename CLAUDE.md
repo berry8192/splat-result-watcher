@@ -24,5 +24,8 @@ WebSocket（既定 `ws://127.0.0.1:3140/events`）で流す単独アプリ。受
 - `python tools/gen_icon.py` … アプリのアイコン（`icons/`）を描き直す。自作の図形だけで、ゲームの絵やロゴは使っていない
 - `python tools/gen_starter.py` … 手がかりの数字（`src/starter_digits.rs`）を作り直す（手書きの `assets/hand_digits.png` を描き直したとき）
 - `cargo test --release` … 状態の移り変わり・サーバ・見本の読み書きの試験。`-- --include-ignored` で手元の見本（samples/snaps）を使った照合の試験も
+  （`samples/snaps/20261006-*` は精算・表彰・メニューなど。N Air の縁あり（10/03〜の見本は左 7px・下 4px に配信の黄色い縁が写る）と OBS の全画面の両方。
+  `samples/snaps/web/` は攻略サイトのメニューの画像で、ランクの読み取りの試験に使う。`samples/keep/` は録画から残した一続きのフレームで、
+  `SRW_REC=samples/keep/20261006-043707 SRW_KNOWN=284 cargo test --release -- --ignored replay_record --nocapture` で流し直せる。どれも git に入れない）
 - exe の manifest は `app.manifest`（build.rs で埋め込む）。DPI はシステム全体で 1 つ。中に日本語を書くと exe が起動しなくなる
 - ゲーム穴は固定（スプラの配信は配置を変えない）。`src/layout.rs`
