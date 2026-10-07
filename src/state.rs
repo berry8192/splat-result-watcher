@@ -106,7 +106,7 @@ pub enum Seen {
     /// 結果発表の左上の「WIN!」「LOSE...」
     Outcome(Outcome),
     /// 個人リザルト（またはスコアボード）の見出し
-    Header { mode: Mode, rule: Option<Rule>, note: Note },
+    Header { mode: Mode, rule: Option<Rule>, note: Note, medals: Option<(u8, u8)> },
     /// X のセット完了の画面。`value` は数え上がる大きな数字、`delta` はしぶきの増減（読めたときだけ）
     XPower { value: f64, delta: Option<f64> },
     /// 「Xパワー 計測中... n/5」
@@ -281,6 +281,10 @@ struct Post {
     progress_done: bool,
     #[serde(skip)]
     reset: Settle<i32>,
+    #[serde(skip)]
+    medals: Settle<(u8, u8)>,
+    #[serde(default)]
+    medals_done: bool,
     #[serde(default)]
     reset_done: bool,
 }
@@ -303,6 +307,8 @@ impl Post {
             progress_done: false,
             reset: Settle::new(STABLE),
             reset_done: false,
+            medals: Settle::new(STABLE_DELTA),
+            medals_done: false,
         }
     }
 }
@@ -388,6 +394,37 @@ pub struct Machine {
     known_udemae: Option<i32>,
     /// 参加費の確かめで分かったこと。チャレンジのマッチングか試合が始まったら、払ったとみなして出す
     pending_fee: Option<Fee>,
+    /// 今のチャレンジ（勝敗と表彰の点）と、最後に読めたランク。推定（このまま終わったら入るポイント）を出す
+    challenge: Option<Challenge>,
+    rank: Option<crate::rank::Rank>,
+    /// 始まったチャレンジの試合の表彰をまだ読んでいない
+    medals_pending: bool,
+    /// 最後のチャレンジの試合
+    challenge_match: Option<String>,
+}
+
+/// 進行中のチャレンジ
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Challenge {
+    wins: u8,
+    losses: u8,
+    /// 表彰の点（金 5、銀 1。チャレンジの間の合計）
+    medal_points: i32,
+    /// 表彰が分からない試合があった（推定は少なめ）
+    medals_unknown: bool,
+}
+
+/// チャレンジの勝ち数の点（表彰を除く）。帯ごとの 1 勝の点 × 勝ち数 + 勝ち数の上乗せ
+/// （攻略サイトの表: S・S+ は 1〜5 勝で 50 / 105 / 165 / 230 / 300。2026-10-06 に調べた）
+fn challenge_points(letter: char, wins: u8) -> i32 {
+    let per = match letter {
+        'C' => 20,
+        'B' => 30,
+        'A' => 40,
+        _ => 50,
+    };
+    const BONUS: [i32; 6] = [0, 0, 5, 15, 30, 50];
+    per * wins as i32 + BONUS[wins.min(5) as usize]
 }
 
 /// 参加費の確かめ
@@ -451,6 +488,10 @@ impl Machine {
             serial: 0,
             known_udemae: None,
             pending_fee: None,
+            challenge: None,
+            rank: None,
+            medals_pending: false,
+            challenge_match: None,
         }
     }
 
@@ -692,9 +733,16 @@ impl Machine {
 
         // 個人リザルトの見出し（試合が無いとき＝ロビーでの見返しは使わない）
         let h = match &seen {
-            Seen::Header { mode, rule, note } => Some((*mode, *rule, *note)),
+            Seen::Header { mode, rule, note, .. } => Some((*mode, *rule, *note)),
             _ => None,
         };
+        // 見出しの画面の下の表彰。負けは見出しを待ってから結果を出すので、結果の前から数えておく（2.4〜3 秒しか映らない）
+        if let Some(g) = &mut self.game {
+            g.post.medals.push(match &seen {
+                Seen::Header { medals, .. } => *medals,
+                _ => None,
+            });
+        }
         if self.header.push(h) {
             if let Some(g) = &mut self.game {
                 if g.header.is_none() {
@@ -737,7 +785,82 @@ impl Machine {
             self.close(at, &mut out);
         }
         self.remember_udemae(&out);
+        self.track_challenge(at, &mut out);
         out
+    }
+
+    /// 出した出来事から今のチャレンジの勝敗と表彰を数え、変わったら推定を出す
+    fn track_challenge(&mut self, at: DateTime<Utc>, out: &mut Vec<Value>) {
+        let before = self.challenge;
+        let challenge_id = |ev: &Value| ev["mode"] == "bankara_challenge";
+        for ev in out.iter() {
+            match ev["type"].as_str() {
+                Some("battle_started") if challenge_id(ev) => {
+                    // 前の試合の表彰が読めなかった分は、少なめに見積もる（新しいチャレンジには持ち越さない）
+                    match &mut self.challenge {
+                        Some(c) => c.medals_unknown |= self.medals_pending,
+                        None => self.challenge = Some(Challenge::default()),
+                    }
+                    self.medals_pending = true;
+                }
+                Some("result") if challenge_id(ev) => {
+                    self.challenge_match = ev["match_id"].as_str().map(String::from);
+                    let c = self.challenge.get_or_insert_with(Challenge::default);
+                    match ev["outcome"].as_str() {
+                        Some("win") => c.wins += 1,
+                        Some("lose") => c.losses += 1,
+                        _ => {}
+                    }
+                }
+                Some("medals") if challenge_id(ev) => {
+                    if let Some(c) = &mut self.challenge {
+                        c.medal_points += 5 * ev["gold"].as_i64().unwrap_or(0) as i32 + ev["silver"].as_i64().unwrap_or(0) as i32;
+                        self.medals_pending = false;
+                    }
+                }
+                // 進行は X のセットにも出るので、チャレンジの試合のものだけ
+                Some("set_progress") if ev["match_id"].as_str() == self.challenge_match.as_deref() => {
+                    if let Some(c) = &mut self.challenge {
+                        c.wins = ev["wins"].as_u64().unwrap_or(c.wins as u64) as u8;
+                        c.losses = ev["losses"].as_u64().unwrap_or(c.losses as u64) as u8;
+                    }
+                }
+                Some("observed") if ev["kind"] == "udemae" => {
+                    if let Some(r) = ev["rank"].as_str().and_then(crate::rank::Rank::parse) {
+                        self.rank = Some(r);
+                    }
+                    // メニューの勝ち負けのランプ（途中から起動したときも勝敗はそろう。表彰は分からない）
+                    if let (Some(w), Some(l)) = (ev["wins"].as_u64(), ev["losses"].as_u64()) {
+                        if w == 0 && l == 0 {
+                            self.challenge = None;
+                        } else {
+                            let c = self.challenge.get_or_insert(Challenge { medals_unknown: true, ..Default::default() });
+                            (c.wins, c.losses) = (w as u8, l as u8);
+                        }
+                    }
+                }
+                // チャレンジの精算（TOTAL）で終わり。途中でオープンを挟んでも続く（オープンの精算では終わらない）
+                Some("power") if ev["kind"] == "udemae" && ev["match_id"].as_str() == self.challenge_match.as_deref() => self.challenge = None,
+                _ => {}
+            }
+        }
+        if self.challenge.is_none() {
+            self.medals_pending = false;
+        }
+        // 勝敗か表彰の点が変わったときだけ（試合の始まりでは出さない。試合中に出すのは status と battle_started だけ）
+        let Some(c) = self.challenge else { return };
+        let key = |c: Option<Challenge>| c.map_or((0, 0, 0), |c| (c.wins, c.losses, c.medal_points));
+        if key(Some(c)) == key(before) {
+            return;
+        }
+        let letter = self.rank.map_or('S', |r| r.letter);
+        let gain = challenge_points(letter, c.wins) + c.medal_points;
+        let mut ev = json!({"type": "estimate", "kind": "udemae", "gain": gain, "wins": c.wins, "losses": c.losses,
+            "medals": c.medal_points, "at": time(at)});
+        if c.medals_unknown {
+            ev["medals_partial"] = true.into();
+        }
+        out.push(ev);
     }
 
     /// チャレンジが始まった: 参加費の確かめを見ていれば払ったとみなし、払った後の値を出す。
@@ -925,6 +1048,17 @@ impl Machine {
                 "before": null, "after": g.post.reset.latest, "at": time(at)}));
         }
 
+        // 表彰（見出しの画面で数えておいたもの）。試合ごとに 1 回
+        if !g.post.medals_done && g.post.medals.first.is_some() {
+            g.post.medals_done = true;
+            let (gold, silver) = g.post.medals.first.unwrap();
+            let mut ev = json!({"type": "medals", "match_id": g.id, "gold": gold, "silver": silver});
+            if let Some(m) = g.mode() {
+                ev["mode"] = m.as_str().into();
+            }
+            out.push(ev);
+        }
+
         // 進行: WIN の判子の数と勝ち数が合うときだけ数える（数字は判子の後から変わる）
         g.post.progress.push(match seen {
             Seen::Progress { wins, losses, stamps, .. } if stamps.is_none_or(|s| s == *wins) => Some((*wins, *losses)),
@@ -1044,7 +1178,7 @@ mod tests {
     }
 
     fn header(mode: Mode, rule: Rule, note: Note) -> Seen {
-        Seen::Header { mode, rule: Some(rule), note }
+        Seen::Header { mode, rule: Some(rule), note, medals: None }
     }
 
     fn xp(v: f64, d: Option<f64>) -> Seen {
@@ -1431,6 +1565,47 @@ mod tests {
     }
 
     #[test]
+    fn challenge_estimate_counts_wins_and_medals() {
+        let mut r = Run::new();
+        let ch = Seen::Matching(Mode::BankaraChallenge);
+        let medal_header = |g, s| Seen::Header { mode: Mode::BankaraChallenge, rule: Some(Rule::Asari), note: Note::None, medals: Some((g, s)) };
+        let progress = |w, l| Seen::Progress { wins: w, losses: l, stamps: Some(w), mode: Some(Mode::BankaraChallenge) };
+        // 1 戦目: 勝ち・金 2 銀 1
+        r.feed(ch.clone(), 4).intro(Rule::Asari).feed(win(), 6).wait(5);
+        r.feed(medal_header(2, 1), 3).wait(5).feed(progress(1, 0), 4).wait(30);
+        // 2 戦目: 負け・銀 1
+        r.feed(ch.clone(), 4).intro(Rule::Asari).feed(Seen::Outcome(Outcome::Lose), 6).wait(5);
+        r.feed(medal_header(0, 1), 3).wait(5).feed(progress(1, 1), 4).wait(30);
+        let est: Vec<_> = r.events.iter().filter(|e| e["type"] == "estimate").map(|e| e["gain"].as_i64().unwrap()).collect();
+        // S（ランクが分からないとき）の 1 勝 50 + 金 2 銀 1 = 61、その後 銀 1 で 62
+        assert_eq!(est.last(), Some(&62), "{est:?}");
+        assert!(est.contains(&61));
+        assert_eq!(r.of("medals").len(), 2);
+        // オープンを挟んでも続き、オープンの精算では終わらない
+        let mv = Seen::MatchingValue { mode: Mode::BankaraOpen, what: Observed::Udemae { value: Some(300), rank: None }, wins: None, losses: None };
+        r.feed(mv, 4).intro(Rule::Area).feed(Seen::Outcome(Outcome::Lose), 6).wait(5);
+        r.feed(Seen::UdemaeScreen { mode: Some(Mode::BankaraOpen), total: Some(-13) }, 3).wait(30);
+        r.feed(ch.clone(), 4).intro(Rule::Asari).feed(win(), 6).wait(5).feed(progress(2, 1), 4).wait(30);
+        let last = r.events.iter().rev().find(|e| e["type"] == "estimate").unwrap();
+        assert_eq!((last["wins"].as_u64(), last["gain"].as_i64()), (Some(2), Some(105 + 12)));
+        // 試合の始まりでは出さない
+        let started = r.events.iter().rposition(|e| e["type"] == "battle_started").unwrap();
+        assert_ne!(r.events.get(started + 1).map(|e| e["type"].clone()), Some(json!("estimate")));
+    }
+
+    #[test]
+    fn challenge_points_follow_the_table() {
+        let s: Vec<_> = (1..=5).map(|w| challenge_points('S', w)).collect();
+        assert_eq!(s, [50, 105, 165, 230, 300]);
+        let c: Vec<_> = (1..=5).map(|w| challenge_points('C', w)).collect();
+        assert_eq!(c, [20, 45, 75, 110, 150]);
+        assert_eq!(challenge_points('A', 3), 135);
+        assert_eq!(challenge_points('B', 4), 150);
+        assert_eq!(crate::rank::Rank::parse("S+12").map(|r| r.num), Some(Some(12)));
+        assert_eq!(crate::rank::Rank::parse("A-").map(|r| r.modifier), Some(-1));
+    }
+
+    #[test]
     fn bankara_open_is_decided_by_the_matching() {
         let mut r = Run::new();
         r.feed(Seen::Matching(Mode::BankaraOpen), 10).intro(Rule::Area).feed(win(), 6);
@@ -1549,9 +1724,22 @@ mod replay {
     fn replay_record() {
         let Ok(dir) = std::env::var("SRW_REC") else { return };
         let dir = std::path::PathBuf::from(dir);
-        let day = dir.file_name().unwrap().to_string_lossy()[..8].to_string();
-        let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|e| e == "jpg")).collect();
+        // ファイル名は時刻だけなので、日をまたいで録り続けたフォルダでは名前の順が撮った順にならない。
+        // 撮った時刻はファイルの更新時刻で決める
+        let mut files: Vec<(DateTime<Utc>, std::path::PathBuf)> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|x| x == "jpg"))
+            .map(|e| (DateTime::<Utc>::from(e.metadata().unwrap().modified().unwrap()), e.path()))
+            .collect();
         files.sort();
+        // ローカル時刻で絞る（`SRW_START=2026-10-06T04:37 SRW_END=2026-10-06T05:10`）
+        let bound = |k: &str| {
+            std::env::var(k).ok().and_then(|v| chrono::NaiveDateTime::parse_from_str(&format!("{v}:00"), "%Y-%m-%dT%H:%M:%S").ok())
+                .map(|t| t.and_local_timezone(chrono::Local).unwrap().with_timezone(&Utc))
+        };
+        let (start, end) = (bound("SRW_START"), bound("SRW_END"));
+        files.retain(|(at, _)| start.is_none_or(|s| *at >= s) && end.is_none_or(|e| *at <= e));
         let rec = Recognizer::new(Templates::load(&Templates::default_dir()).unwrap());
         let mut m = Machine::new(Config::default());
         // 録画の始めのウデマエポイント（分かっていれば。手動操作で入れた値の代わり）
@@ -1559,10 +1747,8 @@ mod replay {
             m.set_known_udemae(v);
         }
         let mut last = String::new();
-        for p in files {
+        for (at, p) in files {
             let stem = p.file_stem().unwrap().to_string_lossy().to_string();
-            let local = chrono::NaiveDateTime::parse_from_str(&format!("{day}{}", &stem[..10]), "%Y%m%d%H%M%S_%3f").unwrap();
-            let at = local.and_local_timezone(chrono::Local).unwrap().with_timezone(&Utc);
             let img = image::open(&p).unwrap().to_rgb8();
             let seen = rec.recognize(&img).seen;
             let s = format!("{seen:?}");

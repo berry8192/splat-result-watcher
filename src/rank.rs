@@ -39,6 +39,21 @@ impl fmt::Display for Rank {
 }
 
 impl Rank {
+    /// 「S+1」「A-」などを読む（出来事の `rank` から）
+    pub fn parse(s: &str) -> Option<Rank> {
+        let mut it = s.chars();
+        let letter = it.next()?;
+        let rest: String = it.collect();
+        let (modifier, num) = match rest.chars().next() {
+            Some('+') => (1, rest[1..].parse().ok()),
+            Some('-') => (-1, None),
+            None => (0, None),
+            _ => return None,
+        };
+        let r = Rank { letter, modifier, num };
+        r.valid().then_some(r)
+    }
+
     /// ゲームにあるランクか（S は「+」「-」なし、S+ は 0〜50、C・B・A は数字なし）
     pub fn valid(&self) -> bool {
         match (self.letter, self.modifier, self.num) {

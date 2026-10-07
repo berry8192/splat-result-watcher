@@ -426,7 +426,12 @@ impl Recognizer {
         };
         if let Some(mode) = header {
             let rule = self.decide(work, p("rule"), RULE_MIN, notes).and_then(rule);
-            return Seen::Header { mode, rule, note: Note::None };
+            // 見出しの画面の下の方に、自分の表彰（金と銀の印）が並ぶ
+            let medals = shapes::medals(work);
+            if let Some((g, s)) = medals {
+                notes.text.push(format!("形で見分けた: 表彰 金 {g} 銀 {s}"));
+            }
+            return Seen::Header { mode, rule, note: Note::None, medals };
         }
 
         let matching = match self.decide(work, p("matching"), MATCHING_MIN, notes) {
@@ -709,7 +714,7 @@ mod with_samples {
         let r = Recognizer::new(Templates::load(&dir).unwrap());
         let see = |key: &str| r.recognize(&load(key)).seen;
         assert_eq!(see("032745"), Seen::Outcome(Outcome::Win), "ステッカーの重なった WIN!");
-        assert_eq!(see("042142"), Seen::Header { mode: Mode::BankaraChallenge, rule: Some(Rule::Asari), note: Note::None });
+        assert_eq!(see("042142"), Seen::Header { mode: Mode::BankaraChallenge, rule: Some(Rule::Asari), note: Note::None, medals: shapes::medals(&templates::to_work(&load("042142"))) });
         assert_eq!(see("033345"), Seen::XPower { value: 2194.6, delta: Some(94.6) });
         // 7 の見本が無いので増減は読めない
         assert_eq!(see("101625"), Seen::XPower { value: 2336.8, delta: None });

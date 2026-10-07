@@ -674,7 +674,7 @@ mod tests {
         let t = Templates::default();
         let at = Run::new().at;
         for i in 0..4 {
-            l.feed(at + Duration::milliseconds(500 * i), &Seen::Header { mode: Mode::X, rule: None, note: crate::state::Note::None }, &[seen_shape("mode", "x", 1)], &t);
+            l.feed(at + Duration::milliseconds(500 * i), &Seen::Header { mode: Mode::X, rule: None, note: crate::state::Note::None, medals: None }, &[seen_shape("mode", "x", 1)], &t);
         }
         // 3 分を過ぎてから X パワーの画面が出ても、別の試合かもしれないので足さない
         let got = l.feed(at + Duration::minutes(4), &Seen::Unknown, &[seen_shape("power_label", "x_power", 3)], &t);
@@ -687,7 +687,7 @@ mod tests {
         let t = Templates::default();
         let at = Run::new().at;
         for i in 0..4 {
-            l.feed(at + Duration::milliseconds(500 * i), &Seen::Header { mode: Mode::X, rule: None, note: crate::state::Note::None }, &[seen_shape("mode", "x", 1)], &t);
+            l.feed(at + Duration::milliseconds(500 * i), &Seen::Header { mode: Mode::X, rule: None, note: crate::state::Note::None, medals: None }, &[seen_shape("mode", "x", 1)], &t);
         }
         // X と見えた帯の後に、精算（バンカラ）の画面が出たら足さない
         assert!(l.feed(at + Duration::seconds(30), &Seen::Udemae { value: 100, total: None, mode: None }, &[], &t).is_empty());

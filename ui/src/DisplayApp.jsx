@@ -42,12 +42,15 @@ export function pick(events) {
   let xp = null;
   let udemae = null;
   let rank = null; // ウデマエのランク（"S+1" など。メニューで読めたとき）
+  let estimate; // 今のチャレンジがこのまま終わったら入るポイント（精算の後は無し）
   let set = null;
   let ended = null; // セットを終わらせたパワーの変動（match_id）と、その試合の勝敗
   for (const e of events) {
     if (mode == null && (e.type === "result" || e.type === "battle_started" || e.type === "lobby") && e.mode) mode = e.mode;
     if (mode == null && e.type === "observed") mode = e.kind === "x" ? "x" : "bankara";
     if (rule == null && e.rule && (e.type === "result" || e.type === "battle_started" || e.type === "observed" || e.type === "lobby")) rule = e.rule;
+    if (estimate === undefined && e.type === "estimate" && e.kind === "udemae") estimate = e.gain;
+    if (estimate === undefined && e.type === "power" && e.kind === "udemae") estimate = null;
     if (e.type === "power" && !e.calibrating && e.after != null) {
       if (e.kind === "x" && xp == null) xp = e.after;
       if (e.kind === "udemae" && udemae == null) udemae = e.after;
@@ -75,7 +78,7 @@ export function pick(events) {
     const win = ended.outcome === "win";
     set.final = { wins: ended.prev.wins + (win ? 1 : 0), losses: ended.prev.losses + (win ? 0 : 1) };
   }
-  return { mode, rule, xp, udemae, rank, set };
+  return { mode, rule, xp, udemae, rank, set, estimate: estimate ?? null };
 }
 
 /** 値が変わったら、前の値から新しい値へ数え上げる（ドラムロール）。上がるときは 4 秒かけ、下がるときは 1.6 秒。
@@ -109,13 +112,14 @@ function useRolling(value) {
   return { shown, rolling };
 }
 
-function Power({ shown, isX, isBankara, rank, size, color }) {
+function Power({ shown, isX, isBankara, rank, estimate, size, color }) {
   if (shown == null) return null;
   return (
     <span className="disp-power" style={{ fontSize: size, color }}>
       {isBankara && rank && <small style={{ fontSize: Math.round(size * 0.6) }}>{rank} </small>}
       {isX ? shown.toFixed(1) : Math.round(shown)}
       {isBankara && <small style={{ fontSize: Math.round(size * 0.42) }}>p</small>}
+      {isBankara && estimate != null && <small style={{ fontSize: Math.round(size * 0.42) }}> +{estimate}</small>}
     </span>
   );
 }
@@ -186,7 +190,7 @@ export default function DisplayApp() {
   };
 
   const events = s?.events ?? [];
-  const { mode, rule, xp, udemae, rank, set } = pick(events);
+  const { mode, rule, xp, udemae, rank, set, estimate } = pick(events);
   const modeName = MODE_NAMES[mode] ?? "";
   const ruleName = RULE_NAMES[rule] ?? "";
   const isX = mode === "x";
@@ -197,7 +201,7 @@ export default function DisplayApp() {
   const setShown = set?.final && rolling ? set.final : set;
   const showSet = setShown && mode !== "bankara_open" && mode !== "other";
   const note = !s ? "" : !s.source ? "N Air または OBS が見つかりません" : events.length === 0 ? "まだ試合を認識していません" : "";
-  const powerEl = shown != null && <Power shown={shown} isX={isX} isBankara={isBankara} rank={rank} size={d.font_power} color={d.power_color} />;
+  const powerEl = shown != null && <Power shown={shown} isX={isX} isBankara={isBankara} rank={rank} estimate={estimate} size={d.font_power} color={d.power_color} />;
 
   return (
     <div

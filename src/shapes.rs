@@ -159,6 +159,53 @@ pub fn entry_fee(img: &RgbImage) -> bool {
     ratio(img, FEE_CIRCLE, fee_purple) >= 0.5 && ratio(img, FEE_DIGITS, fee_green) >= 0.08
 }
 
+/// 表彰の画面の、印と札が並ぶ範囲（1〜3 個で大きさと置き方が変わる。X は少し下がる）
+const MEDALS: Roi = Roi::new(700, 350, 680, 260);
+
+/// 表彰の画面の印の数（金, 銀）。札（明るい灰色の大きな長方形。銀の印は同じ色なので札とつながる）の数が全部の数、
+/// 黄色の印の数が金。札が 1〜3 枚、右下へ階段状に並ぶときだけ（1024 幅で札は 200〜290×50〜64、金の印は 37×30 前後）
+pub fn medals(img: &RgbImage) -> Option<(u8, u8)> {
+    let (x0, y0, w, h) = MEDALS.scaled(img.width());
+    let (w, h) = ((w.min(img.width() - x0)) as usize, (h.min(img.height() - y0)) as usize);
+    let k = img.width() as f64 / 1024.0;
+    let at = |x: usize, y: usize| img.get_pixel(x0 + x as u32, y0 + y as u32).0;
+    let tag: Vec<bool> = (0..w * h).map(|i| {
+        let [r, g, b] = at(i % w, i / w);
+        let (mx, mn) = (r.max(g).max(b), r.min(g).min(b));
+        mn >= 140 && mx - mn < 30
+    }).collect();
+    let gold: Vec<bool> = (0..w * h).map(|i| {
+        let [r, g, b] = at(i % w, i / w);
+        r >= 140 && g >= 120 && b < 90 && r as i32 - b as i32 > 80
+    }).collect();
+    let size = |c: &Comp| ((c.x1 - c.x0 + 1) as f64 / k, (c.y1 - c.y0 + 1) as f64 / k, c.n as f64 / (k * k));
+    let mut tags: Vec<Comp> = components(&tag, w, h)
+        .into_iter()
+        .filter(|c| {
+            let (cw, ch, n) = size(c);
+            (170.0..=310.0).contains(&cw) && (42.0..=72.0).contains(&ch) && n >= 0.5 * cw * ch
+        })
+        .collect();
+    if tags.is_empty() || tags.len() > 3 {
+        return None;
+    }
+    tags.sort_by_key(|c| c.y0);
+    if tags.windows(2).any(|p| p[1].y0 <= p[0].y0 || p[1].x0 <= p[0].x0) {
+        return None;
+    }
+    let golds = components(&gold, w, h)
+        .into_iter()
+        .filter(|c| {
+            let (cw, ch, n) = size(c);
+            (25.0..=50.0).contains(&cw) && (20.0..=42.0).contains(&ch) && n >= 300.0
+        })
+        .count();
+    if golds > tags.len() {
+        return None;
+    }
+    Some((golds as u8, (tags.len() - golds) as u8))
+}
+
 /// 精算のゲージ。真ん中の黒いパネルも要る（試合の始まりの「GO!」の白っぽいしぶきをゲージと見たことがある。本物のパネルは 0.94〜1.00、GO! は 0.00）
 pub fn udemae_gauge(img: &RgbImage) -> bool {
     ratio(img, GAUGE, mid_gray) >= 0.6 && result_panel(img)
@@ -968,5 +1015,17 @@ mod measure {
             println!("  メニューのランプ X {:?} バンカラ {:?}", crate::recognize::count_progress(&img, &crate::recognize::MENU_X_STRIP), crate::recognize::count_progress(&img, &crate::recognize::MENU_BANKARA_STRIP));
             println!("  ナワバリ {} 途中 {}", turf_intro(&img), r.notes.iter().take(3).cloned().collect::<Vec<_>>().join(" / "));
         }
+    }
+}
+
+/// 表彰の印を数える（`SRW_IMGS=a.jpg;b.jpg cargo test --release -- --ignored measure_medals --nocapture`）
+#[test]
+#[ignore]
+fn measure_medals() {
+    let list = std::env::var("SRW_IMGS").unwrap_or_default();
+    for p in list.split(';').filter(|p| !p.is_empty()) {
+        let img = image::open(p).unwrap().to_rgb8();
+        let img = image::imageops::resize(&img, 1024, 576, image::imageops::FilterType::Triangle);
+        println!("{}  {:?}", p.rsplit(['/', '\\']).next().unwrap(), medals(&img));
     }
 }
